@@ -78,7 +78,7 @@ The main way to run our RECAP extraction on a single book would be to fill the a
 from extraction_utils import BookExtractionTask
 
 task = BookExtractionTask(
-    json_file_path="./data/A_Christmas_Carol_-_Charles_Dickens_summary_gemini-2.5-pro-exp-03-25.json",
+    json_file_path="../Public_Domain/A_Christmas_Carol_-_Charles_Dickens_summary_gemini-2.5-pro-exp-03-25.json",
     model_name="deepseek-chat",                              # Target model for extractions
     evaluation_model_name="gemini-2.5-flash",                # Model to evaluate if extraction is valid
     jailbreaker_model_name="gemini-2.5-flash",               # Model for jailbreak prompt generation  (not needed if doing the Narrative Tool Injection)
