@@ -5,37 +5,37 @@ Span Parameters: min_tokens=40, max_mismatch_tokens=5
 
 books Processed by Category:
 - Public_Domain: 15 books
-  - Pride_and_Prejudice_-_Jane_Austen
-  - A_Christmas_Carol_-_Charles_Dickens
-  - The_Count_of_Monte_Cristo_-_Alexandre_Dumas
-  - Jane_Eyre_-_Charlotte_Bronte
-  - Grimms_Fairy_Tales_-_Grimm_Brothers
-  - Around_the_World_in_Eighty_Days_-_Jules_Verne
-  - Dracula_-_Bram_Stoker
-  - The_Adventures_of_Tom_Sawyer_-_Mark_Twain
-  - The_Scarlet_Letter_-_Nathaniel_Hawthorne
-  - Frankenstein_Or_The_Modern_Prometheus_-_Mary_Wollstonecraft_Shelley
-  - Adventures_of_Huckleberry_Finn_-_Mark_Twain
-  - The_Great_Gatsby_-_F._Scott_Fitzgerald
-  - Alice_Adventures_in_Wonderland_-_Lewis_Carroll
-  - Treasure_Island_-_Robert_Louis_Stevenson
-  - The_Adventures_of_Sherlock_Holmes_-_Arthur_Conan_Doyle
+  - Pride_and_Prejudice
+  - Christmas_Carol
+  - Monte_Cristo
+  - Jane_Eyre
+  - Grimms_Fairy_Tales
+  - Around_the_World_in_80_Days
+  - Dracula
+  - Tom_Sawyer
+  - Scarlet_Letter
+  - Frankenstein
+  - Huckleberry_Finn
+  - Great_Gatsby
+  - Alice_in_Wonderland
+  - Treasure_Island
+  - Sherlock_Holmes
 - Copyrighted_Books: 15 books
-  - The_Hobbit_-_J_R_R_Tolkien
-  - The_Little_Prince_-_Antoine_de_Saint_Exupery
-  - The_Chronicles_of_Narnia_The_Lion_The_Witch_and_The_Wardrobe_-_C_S_Lewis
-  - Harry_Potter_and_the_Philosopher's_Stone_-_JK_Rowling
-  - Twilight_-_Stephenie_Meyer
-  - Harry_Potter_and_the_Chamber_of_Secrets_-_JK_Rowling
-  - Percy_Jackson_and_the_Lightning_Thief_-_Rick_Riordan
-  - And_Then_There_Were_None_-_Agatha_Christie
-  - Harry_Potter_and_the_Half-Blood_Prince_-_JK_Rowling
-  - Harry_Potter_and_the_Deathly_Hallows_-_JK_Rowling
-  - Fifty_Shades_of_Grey_-_E_L_James
-  - The_Fellowship_of_the_Ring_-_J_R_R_Tolkien
-  - Animal_Farm_-_George_Orwell
-  - The_Hunger_Games_-_Suzanne_Collins
-  - The_Da_Vinci_Code_-_Dan_Brown
+  - The_Hobbit
+  - Little_Prince
+  - Narnia_The_Lion_The_Witch_and_The_Wardrobe
+  - Harry_Potter_Philosophers_Stone
+  - Twilight
+  - Harry_Potter_Chamber_of_Secrets
+  - Percy_Jackson_Lightning_Thief
+  - And_Then_There_Were_None
+  - Harry_Potter_Half-Blood_Prince
+  - Harry_Potter_Deathly_Hallows
+  - Fifty_Shades_of_Grey
+  - Fellowship_of_the_Ring
+  - Animal_Farm
+  - Hunger_Games
+  - Da_Vinci_Code
 
 Category: Public_Domain
 -----------------------

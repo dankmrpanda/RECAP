@@ -78,7 +78,7 @@ The main way to run our RECAP extraction on a single book would be to fill the a
 from extraction_utils import BookExtractionTask
 
 task = BookExtractionTask(
-    json_file_path="../Public_Domain/A_Christmas_Carol_-_Charles_Dickens_summary_gemini-2.5-pro-exp-03-25.json",
+    json_file_path="../Public_Domain/Christmas_Carol_summary_gemini-2.5-pro-exp-03-25.json",
     model_name="deepseek-chat",                              # Target model for extractions
     evaluation_model_name="gemini-2.5-flash",                # Model to evaluate if extraction is valid
     jailbreaker_model_name="gemini-2.5-flash",               # Model for jailbreak prompt generation  (not needed if doing the Narrative Tool Injection)
@@ -98,7 +98,7 @@ Once we have obtained the predictions for the target book, the next step is to e
 from extraction_utils import MetricsCalculationTask
 
 metrics_task = MetricsCalculationTask(
-    extraction_json_path="./Results/A_Christmas_Carol_-_Charles_Dickens/Extractions/A_Christmas_Carol_-_Charles_Dickens_extraction_deepseek-chat_feedback_gpt-4.1.json",
+    extraction_json_path="./Results/Christmas_Carol/Extractions/Christmas_Carol_extraction_deepseek-chat_feedback_gpt-4.1.json",
     min_tokens=40,                    # Minimum tokens for contiguous spans
     max_mismatch_tokens=5             # Maximum mismatch tokens for span merging
 )
