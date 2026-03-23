@@ -1,4 +1,5 @@
 from custom_utils import extract_json_content
+from openai import APIError
 from tqdm import tqdm
 import sys
 
@@ -68,7 +69,7 @@ def feedback_loop(feedback_client,
     
 
     max_iterations = 5
-    for iteration in tqdm(range(1, max_iterations + 1), desc=f"Refinements)", leave=False):
+    for iteration in tqdm(range(1, max_iterations + 1), desc="Refinements", leave=False):
         try:
             # 1) Guidance
             print(f"Iteration {iteration}: feedback step...", file=sys.stderr, flush=True)

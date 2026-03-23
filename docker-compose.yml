@@ -1,0 +1,16 @@
+services:
+  recap-demo:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount the entire project — code changes are reflected instantly
+      - .:/app
+      # Persist uploads and results across container restarts
+      - ./demo/uploads:/app/demo/uploads
+      - ./demo/results:/app/demo/results
+    env_file:
+      - .env
+    environment:
+      - FLASK_DEBUG=1
+    restart: unless-stopped

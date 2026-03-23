@@ -19,12 +19,11 @@ from dotenv import load_dotenv
 from openai import OpenAI, APIError
 from tqdm import tqdm
 
-# Import supporting modules
-from extraction_evaluator_classifier import classify_extraction
-from metrics_utils import TextMetricsCalculator
 import custom_utils
-import jailbreaker
-from feedback_agent import feedback_loop
+
+# Heavy / rarely-needed modules are lazy-imported to speed up startup.
+# See _lazy_imports() for: metrics_utils, jailbreaker, feedback_agent,
+# extraction_evaluator_classifier.
 
 
 class BookExtractionTask:
@@ -86,19 +85,9 @@ class BookExtractionTask:
         self.anthropic_keys = anthropic_keys or ["ANTHROPIC_API_KEY"]
         self.deepseek_keys = deepseek_keys or ["DEEPSEEK_API_KEY"]
         
-        # Metrics configuration - only ROUGE
+        # Metrics configuration - only ROUGE (lazy-loaded on first use)
         self.enable_metrics = enable_metrics
-        if self.enable_metrics:
-            self.metrics_calc = TextMetricsCalculator(
-                sbert_model_name='all-MiniLM-L6-v2',
-                use_rouge=True,
-                use_cosine=False,
-                use_reconstruction=False,
-                device='cpu',
-                num_masking_passes=1
-            )
-        else:
-            self.metrics_calc = None
+        self._metrics_calc = None
             
         # Initialize clients
         self._initialize_clients()
@@ -106,6 +95,21 @@ class BookExtractionTask:
         # Prepare output paths
         self._setup_output_paths()
         
+    @property
+    def metrics_calc(self):
+        """Lazy-load TextMetricsCalculator on first access."""
+        if self._metrics_calc is None and self.enable_metrics:
+            from metrics_utils import TextMetricsCalculator
+            self._metrics_calc = TextMetricsCalculator(
+                sbert_model_name='all-MiniLM-L6-v2',
+                use_rouge=True,
+                use_cosine=False,
+                use_reconstruction=False,
+                device='cpu',
+                num_masking_passes=1,
+            )
+        return self._metrics_calc
+
     def _initialize_clients(self):
         """Initialize LLM clients for different models."""
         self.extraction_client = self._get_llm_client(self.model_name)
@@ -294,6 +298,7 @@ class BookExtractionTask:
                               if structured else content)
 
                     # Classify extraction for copyright content
+                    from extraction_evaluator_classifier import classify_extraction
                     classification = classify_extraction(
                         prompt=full_prompt,
                         response=cleaned,
@@ -329,6 +334,7 @@ class BookExtractionTask:
         jailbreak_method: str = "Narrative_Injection"
     ):
         """Generate jailbreak prompts for extraction."""
+        import jailbreaker
         try:
             if jailbreak_method == "Past_Conversion":
                 return jailbreaker.past_reformulator(
@@ -543,6 +549,7 @@ class BookExtractionTask:
                         
                         # Run feedback refinement loop
                         if self.metrics_calc:
+                            from feedback_agent import feedback_loop
                             print("Performing - Feedback Refinement Loop", file=sys.stderr, flush=True)
                             refinements = feedback_loop(
                                 feedback_client=self.feedback_client,
@@ -782,6 +789,7 @@ class MetricsCalculationTask:
         print(f"    Output: {self.metrics_json_path}")
         
         # Initialize metrics calculator
+        from metrics_utils import TextMetricsCalculator
         metrics_calc = TextMetricsCalculator(
             use_rouge=True,
             use_cosine=False,

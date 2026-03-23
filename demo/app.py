@@ -1,0 +1,594 @@
+#!/usr/bin/env python3
+"""
+RECAP Demo — Flask Web Application
+-----------------------------------
+A visual demo for the RECAP verbatim extraction pipeline.
+Upload a book (TXT, EPUB, PDF), configure models, and see extraction results.
+"""
+
+import json
+import os
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+from queue import Queue
+
+from flask import (
+    Flask, render_template, request, jsonify,
+    Response, send_from_directory, redirect, url_for
+)
+from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# Add Code directory to path so we can import RECAP modules
+CODE_DIR = Path(__file__).resolve().parent.parent / "Code"
+sys.path.insert(0, str(CODE_DIR))
+
+# Heavy ML imports (torch, transformers) are lazy-loaded inside extraction_utils.
+# Pre-warm lightweight pipeline modules in a background thread so the first
+# pipeline run doesn't pay the import cost.
+def _prewarm_imports():
+    try:
+        import openai          # noqa: F401
+        import tqdm            # noqa: F401
+        from book_preprocessor import preprocess_book  # noqa: F401
+        from extraction_utils import BookExtractionTask  # noqa: F401
+    except Exception:
+        pass
+
+threading.Thread(target=_prewarm_imports, daemon=True).start()
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# App setup
+# ---------------------------------------------------------------------------
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB upload limit
+app.config["UPLOAD_FOLDER"] = Path(__file__).resolve().parent / "uploads"
+app.config["RESULTS_FOLDER"] = Path(__file__).resolve().parent / "results"
+
+ALLOWED_EXTENSIONS = {"txt", "epub", "pdf"}
+
+# In-memory task store
+tasks = {}   # task_id -> task info dict
+task_logs = {}  # task_id -> Queue of log messages
+task_controls = {}  # task_id -> {"pause": threading.Event, "cancel": bool}
+
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+@app.after_request
+def add_header(r):
+    r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    r.headers["Pragma"] = "no-cache"
+    r.headers["Expires"] = "0"
+    return r
+
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+# ---------------------------------------------------------------------------
+# Model & provider configuration
+# ---------------------------------------------------------------------------
+
+# Provider defaults: first model in list is the default for that provider
+PROVIDER_DEFAULTS = {
+    "gemini": "gemini-2.5-flash",
+    "openai": "gpt-4.1-mini",
+    "deepseek": "deepseek-chat",
+    "anthropic": "claude-sonnet-4-6",
+}
+
+# Priority order when choosing which provider to default to
+PROVIDER_PRIORITY = ["gemini", "openai", "deepseek", "anthropic"]
+
+KEY_ENV_MAP = {
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
+
+
+def _get_configured_providers():
+    """Return dict of provider -> bool indicating if an API key is set."""
+    return {
+        provider: bool(os.environ.get(env_var, "").strip())
+        for provider, env_var in KEY_ENV_MAP.items()
+    }
+
+
+def _get_default_provider():
+    """Return the first provider that has an API key configured."""
+    configured = _get_configured_providers()
+    for provider in PROVIDER_PRIORITY:
+        if configured.get(provider):
+            return provider
+    return "gemini"  # fallback
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def index():
+    """Render the main upload page."""
+    configured = _get_configured_providers()
+    default_provider = _get_default_provider()
+    default_model = PROVIDER_DEFAULTS.get(default_provider, "gemini-3-flash-lite")
+    # Pass env key values so the form can pre-fill them (masked in UI)
+    env_keys = {
+        provider: os.environ.get(env_var, "")
+        for provider, env_var in KEY_ENV_MAP.items()
+    }
+    return render_template(
+        "index.html",
+        configured=configured,
+        default_provider=default_provider,
+        default_model=default_model,
+        env_keys=env_keys,
+    )
+
+
+@app.route("/api/config")
+def api_config():
+    """Return provider configuration for frontend auto-defaults."""
+    configured = _get_configured_providers()
+    default_provider = _get_default_provider()
+    return jsonify({
+        "configured": configured,
+        "default_provider": default_provider,
+        "default_model": PROVIDER_DEFAULTS.get(default_provider, "gemini-3-flash-lite"),
+        "provider_defaults": PROVIDER_DEFAULTS,
+    })
+
+
+@app.route("/results")
+def results_browser():
+    """Render the results browser page."""
+    return render_template("browse.html")
+
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    """Handle book upload and start the extraction pipeline."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    if file.filename == "" or not allowed_file(file.filename):
+        return jsonify({"error": "Invalid file. Please upload a .txt, .epub, or .pdf file."}), 400
+
+    # Save uploaded file
+    app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
+    filename = secure_filename(file.filename)
+    filepath = app.config["UPLOAD_FOLDER"] / filename
+    file.save(str(filepath))
+
+    # Get settings from form (defaults come from env-configured provider)
+    default_provider = _get_default_provider()
+    fallback = PROVIDER_DEFAULTS.get(default_provider, "gemini-3-flash-lite")
+    target_model = request.form.get("target_model", fallback)
+    feedback_model = request.form.get("feedback_model", fallback)
+    evaluation_model = request.form.get("evaluation_model", fallback)
+    preprocessing_model = request.form.get("preprocessing_model", fallback)
+
+    api_keys = {}
+    for key_name in ["openai", "gemini", "anthropic", "deepseek"]:
+        # Prefer form value, fall back to env var
+        val = request.form.get(f"api_key_{key_name}", "").strip()
+        if not val:
+            val = os.environ.get(KEY_ENV_MAP[key_name], "").strip()
+        if val:
+            api_keys[key_name] = val
+
+    # Set API keys as environment variables for this process
+    for key_name, env_name in KEY_ENV_MAP.items():
+        if key_name in api_keys:
+            os.environ[env_name] = api_keys[key_name]
+
+    # Create task
+    task_id = str(uuid.uuid4())[:8]
+    task_logs[task_id] = Queue()
+    tasks[task_id] = {
+        "id": task_id,
+        "status": "starting",
+        "filename": filename,
+        "filepath": str(filepath),
+        "target_model": target_model,
+        "feedback_model": feedback_model,
+        "evaluation_model": evaluation_model,
+        "preprocessing_model": preprocessing_model,
+        "progress": 0,
+        "result_path": None,
+        "error": None,
+    }
+
+    # Set up task controls
+    pause_event = threading.Event()
+    pause_event.set()  # Not paused initially
+    task_controls[task_id] = {"pause": pause_event, "cancel": False}
+
+    # Start background thread
+    thread = threading.Thread(
+        target=_run_pipeline,
+        args=(task_id, str(filepath), target_model, feedback_model,
+              evaluation_model, preprocessing_model, api_keys),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({"task_id": task_id, "redirect": f"/progress/{task_id}"})
+
+
+@app.route("/progress/<task_id>")
+def progress_page(task_id):
+    """Render the progress / results page."""
+    task = tasks.get(task_id)
+    if not task:
+        return redirect(url_for("index"))
+    return render_template("results.html", task_id=task_id, task=task)
+
+
+@app.route("/status/<task_id>")
+def status_stream(task_id):
+    """SSE endpoint for streaming progress logs."""
+    def generate():
+        q = task_logs.get(task_id)
+        if not q:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Unknown task'})}\n\n"
+            return
+
+        while True:
+            try:
+                msg = q.get(timeout=30)
+                yield f"data: {json.dumps(msg)}\n\n"
+                if msg.get("type") in ("complete", "error", "cancelled"):
+                    break
+            except Exception:
+                # Send heartbeat
+                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/results/<task_id>")
+def api_results(task_id):
+    """Return extraction results as JSON."""
+    task = tasks.get(task_id)
+    if not task or not task.get("result_path"):
+        return jsonify({"error": "Results not available"}), 404
+
+    result_path = task["result_path"]
+    if not os.path.exists(result_path):
+        return jsonify({"error": "Results file not found"}), 404
+
+    with open(result_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return jsonify(data)
+
+
+@app.route("/api/task/<task_id>")
+def api_task(task_id):
+    """Return task status."""
+    task = tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Unknown task"}), 404
+    return jsonify(task)
+
+
+@app.route("/api/task/<task_id>/pause", methods=["POST"])
+def api_pause(task_id):
+    """Pause a running pipeline. It will stop after the current event finishes."""
+    ctrl = task_controls.get(task_id)
+    task = tasks.get(task_id)
+    if not ctrl or not task:
+        return jsonify({"error": "Unknown task"}), 404
+    if task["status"] not in ("preprocessing", "extracting"):
+        return jsonify({"error": f"Cannot pause task in state '{task['status']}'"}), 400
+    ctrl["pause"].clear()  # Block the pipeline thread
+    task["status"] = "paused"
+    q = task_logs.get(task_id)
+    if q:
+        q.put({"type": "log", "message": "⏸ Pipeline paused. Progress has been saved."})
+        q.put({"type": "paused", "message": "Pipeline paused"})
+    return jsonify({"status": "paused"})
+
+
+@app.route("/api/task/<task_id>/resume", methods=["POST"])
+def api_resume(task_id):
+    """Resume a paused pipeline."""
+    ctrl = task_controls.get(task_id)
+    task = tasks.get(task_id)
+    if not ctrl or not task:
+        return jsonify({"error": "Unknown task"}), 404
+    if task["status"] != "paused":
+        return jsonify({"error": f"Cannot resume task in state '{task['status']}'"}), 400
+    task["status"] = "extracting"
+    ctrl["pause"].set()  # Unblock the pipeline thread
+    q = task_logs.get(task_id)
+    if q:
+        q.put({"type": "log", "message": "▶ Pipeline resumed."})
+        q.put({"type": "resumed", "message": "Pipeline resumed"})
+    return jsonify({"status": "extracting"})
+
+
+@app.route("/api/task/<task_id>/cancel", methods=["POST"])
+def api_cancel(task_id):
+    """Cancel a running or paused pipeline. Progress is saved automatically."""
+    ctrl = task_controls.get(task_id)
+    task = tasks.get(task_id)
+    if not ctrl or not task:
+        return jsonify({"error": "Unknown task"}), 404
+    if task["status"] not in ("preprocessing", "extracting", "paused"):
+        return jsonify({"error": f"Cannot cancel task in state '{task['status']}'"}), 400
+    ctrl["cancel"] = True
+    ctrl["pause"].set()  # Unblock if paused so thread can exit
+    task["status"] = "cancelled"
+    q = task_logs.get(task_id)
+    if q:
+        q.put({"type": "log", "message": "✗ Pipeline cancelled. Progress has been saved."})
+        q.put({"type": "cancelled", "message": "Pipeline cancelled"})
+    return jsonify({"status": "cancelled"})
+
+
+@app.route("/api/saved-results")
+def api_saved_results():
+    """List all saved result files in the results folder."""
+    results_dir = app.config["RESULTS_FOLDER"]
+    results_dir.mkdir(parents=True, exist_ok=True)
+    files = []
+    for f in sorted(results_dir.glob("**/*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        rel = f.relative_to(results_dir)
+        files.append({
+            "name": f.stem,
+            "path": str(rel).replace("\\", "/"),
+            "size": f.stat().st_size,
+            "modified": f.stat().st_mtime,
+        })
+    return jsonify(files)
+
+
+@app.route("/api/saved-results/<path:filepath>")
+def api_load_saved_result(filepath):
+    """Load a saved result JSON file for visualization."""
+    results_dir = app.config["RESULTS_FOLDER"]
+    target = (results_dir / filepath).resolve()
+    # Prevent path traversal
+    if not str(target).startswith(str(results_dir.resolve())):
+        return jsonify({"error": "Invalid path"}), 403
+    if not target.exists():
+        return jsonify({"error": "File not found"}), 404
+    with open(target, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return jsonify(data)
+
+
+@app.route("/view/<path:filepath>")
+def view_saved_result(filepath):
+    """Render the results page for a previously saved result."""
+    results_dir = app.config["RESULTS_FOLDER"]
+    target = (results_dir / filepath).resolve()
+    if not str(target).startswith(str(results_dir.resolve())) or not target.exists():
+        return redirect(url_for("index"))
+    task = {
+        "filename": Path(filepath).name,
+        "status": "complete",
+    }
+    return render_template("results.html", task_id=None, task=task,
+                           saved_result_path=filepath)
+
+
+# ---------------------------------------------------------------------------
+# Background pipeline
+# ---------------------------------------------------------------------------
+
+class PipelineCancelled(Exception):
+    """Raised when the user cancels the pipeline."""
+    pass
+
+
+def _check_controls(task_id, log_fn):
+    """Check pause/cancel controls. Blocks if paused, raises if cancelled."""
+    ctrl = task_controls.get(task_id)
+    if not ctrl:
+        return
+    if ctrl["cancel"]:
+        raise PipelineCancelled()
+    # Block here if paused (Event is cleared)
+    ctrl["pause"].wait()
+    # Check cancel again after resuming from pause
+    if ctrl["cancel"]:
+        raise PipelineCancelled()
+
+
+def _run_pipeline(task_id, filepath, target_model, feedback_model,
+                  evaluation_model, preprocessing_model, api_keys):
+    """Run the full pipeline in a background thread."""
+    q = task_logs[task_id]
+    task = tasks[task_id]
+
+    def log(msg):
+        q.put({"type": "log", "message": msg})
+
+    try:
+        import time as _time
+        t0 = _time.monotonic()
+
+        def tlog(msg):
+            elapsed = _time.monotonic() - t0
+            log(f"[{elapsed:6.1f}s] {msg}")
+
+        tlog("━━━ Initializing Pipeline ━━━")
+        tlog(f"File: {Path(filepath).name}")
+        tlog(f"Target: {target_model}  |  Feedback: {feedback_model}")
+        tlog(f"Evaluator: {evaluation_model}  |  Preprocessor: {preprocessing_model}")
+        configured = [k for k in api_keys if api_keys[k]]
+        tlog(f"API keys: {', '.join(configured) if configured else 'none'}")
+
+        # Lazy imports
+        _check_controls(task_id, log)
+        tlog("Loading book_preprocessor...")
+        from book_preprocessor import preprocess_book
+        tlog("Loading extraction_utils...")
+
+        _check_controls(task_id, log)
+        from extraction_utils import BookExtractionTask
+        tlog("Modules ready.")
+
+        # Redirect stdout/stderr for the ENTIRE pipeline so nothing is lost
+        import io
+
+        class LogCapture(io.TextIOBase):
+            def write(self, s):
+                if not s:
+                    return 0
+                for line in s.splitlines():
+                    line = line.strip()
+                    if line:
+                        log(line)
+                return len(s)
+
+            def flush(self):
+                pass
+
+        capture = LogCapture()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = capture
+        sys.stderr = capture
+
+        try:
+            _check_controls(task_id, log)
+
+            # ---- Step 1: Preprocess book ----
+            task["status"] = "preprocessing"
+            tlog("━━━ Step 1/2: Preprocessing Book ━━━")
+            tlog(f"Converting {Path(filepath).name} into structured format...")
+
+            json_data = preprocess_book(
+                filepath=filepath,
+                model_name=preprocessing_model,
+                api_keys=api_keys,
+                progress_callback=log,
+            )
+
+            # Save preprocessed JSON
+            book_name = json_data.get("book_name", Path(filepath).stem)
+            preprocessed_dir = Path(filepath).parent
+            preprocessed_path = preprocessed_dir / f"{book_name}_summary_{preprocessing_model}.json"
+            with open(str(preprocessed_path), "w", encoding="utf-8") as f:
+                json.dump(json_data, f, indent=2, ensure_ascii=False)
+
+            total_events = sum(len(ch.get("events", [])) for ch in json_data.get("chapters", []))
+            tlog(f"✓ Preprocessing complete: {len(json_data['chapters'])} chapters, {total_events} events")
+
+            _check_controls(task_id, log)
+
+            # ---- Step 2: Run extraction ----
+            task["status"] = "extracting"
+            task["progress"] = 30
+            tlog("━━━ Step 2/2: Running RECAP Extraction ━━━")
+
+            # Build keys lists
+            gemini_keys = ["GEMINI_API_KEY"] if api_keys.get("gemini") else None
+            openai_keys = ["OPENAI_API_KEY"] if api_keys.get("openai") else None
+            anthropic_keys = ["ANTHROPIC_API_KEY"] if api_keys.get("anthropic") else None
+            deepseek_keys = ["DEEPSEEK_API_KEY"] if api_keys.get("deepseek") else None
+
+            _check_controls(task_id, log)
+            tlog("Initializing extraction task...")
+
+            extraction_task = BookExtractionTask(
+                json_file_path=str(preprocessed_path),
+                model_name=target_model,
+                evaluation_model_name=evaluation_model,
+                jailbreaker_model_name=evaluation_model,
+                feedback_model_name=feedback_model,
+                results_base_folder=str(app.config["RESULTS_FOLDER"]),
+                gemini_keys=gemini_keys,
+                openai_keys=openai_keys,
+                anthropic_keys=anthropic_keys,
+                deepseek_keys=deepseek_keys,
+            )
+            tlog("Extraction task ready.")
+
+            _check_controls(task_id, log)
+
+            # Wrap _needs_processing to check pause/cancel between events
+            orig_needs_processing = extraction_task._needs_processing
+
+            def _checked_needs_processing(event):
+                _check_controls(task_id, log)
+                return orig_needs_processing(event)
+
+            extraction_task._needs_processing = _checked_needs_processing
+
+            extraction_task.run()
+
+            # Find the results file
+            result_path = str(extraction_task.output_path)
+            task["result_path"] = result_path
+            task["status"] = "complete"
+            task["progress"] = 100
+            log("")
+            log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            log("✓ Extraction complete!")
+            log(f"Results saved to: {result_path}")
+            q.put({"type": "complete", "message": "Pipeline complete!", "result_path": result_path})
+
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+    except PipelineCancelled:
+        # Progress already saved by the extraction pipeline's incremental saves
+        try:
+            result_path = str(extraction_task.output_path)
+            if Path(result_path).exists():
+                task["result_path"] = result_path
+                log(f"Progress saved to: {result_path}")
+        except NameError:
+            pass
+        task["status"] = "cancelled"
+
+    except Exception as e:
+        task["status"] = "error"
+        task["error"] = str(e)
+        log(f"✗ Error: {e}")
+        q.put({"type": "error", "message": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import glob as globmod
+
+    app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
+    app.config["RESULTS_FOLDER"].mkdir(parents=True, exist_ok=True)
+
+    # Collect templates + static files so the reloader watches them too
+    demo_dir = Path(__file__).resolve().parent
+    extra = (
+        list(demo_dir.glob("templates/**/*"))
+        + list(demo_dir.glob("static/**/*"))
+        + list((demo_dir.parent / "Code").glob("*.py"))
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True,
+        threaded=True,
+        use_reloader=True,
+        extra_files=[str(f) for f in extra if f.is_file()],
+    )

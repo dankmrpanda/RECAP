@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RECAP — Extraction Progress</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="bg-grid"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-inner">
+            <a href="/" class="logo">
+                <span class="logo-text">RECAP</span>
+                <span class="logo-badge">v2.1</span>
+            </a>
+            <nav class="nav">
+                <a href="/" class="nav-link">Extract</a>
+                <a href="/results" class="nav-link">Results</a>
+                <span class="nav-divider"></span>
+                <span class="nav-context">{{ task.filename }}</span>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main results-main">
+        <!-- Progress Section -->
+        <section id="progress-section" class="card progress-card">
+            <div class="card-header">
+                <h2>
+                    <span id="status-icon" class="status-icon pulsing">⏳</span>
+                    <span id="status-text">Starting pipeline...</span>
+                </h2>
+                <div id="progress-bar-wrap" class="progress-bar-wrap">
+                    <div id="progress-bar" class="progress-bar" style="width: 5%"></div>
+                </div>
+                <div id="pipeline-controls" class="pipeline-controls{% if not task_id %} hidden{% endif %}">
+                    <button id="btn-pause" class="ctrl-btn ctrl-pause" title="Pause">⏸ Pause</button>
+                    <button id="btn-resume" class="ctrl-btn ctrl-resume hidden" title="Resume">▶ Resume</button>
+                    <button id="btn-cancel" class="ctrl-btn ctrl-cancel" title="Cancel">✗ Cancel</button>
+                </div>
+            </div>
+            <div id="log-container" class="log-container">
+                <pre id="log-output" class="log-output"></pre>
+            </div>
+        </section>
+
+        <!-- Results Section (hidden until complete) -->
+        <section id="results-section" class="hidden">
+            <!-- Summary Card -->
+            <div class="card results-summary-card">
+                <div class="card-header">
+                    <h2>📊 Extraction Summary</h2>
+                </div>
+                <div id="summary-stats" class="summary-stats">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+
+            <!-- Chapter Navigation -->
+            <div class="card chapter-nav-card">
+                <div class="card-header">
+                    <h2>📚 Chapters</h2>
+                </div>
+                <div id="chapter-nav" class="chapter-nav">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+
+            <!-- Events Detail -->
+            <div id="events-container">
+                <!-- Filled by JS -->
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>RECAP — <a href="https://arxiv.org/abs/2510.25941" target="_blank">Paper</a> · 
+        <a href="https://github.com/avduarte333/RECAP" target="_blank">GitHub</a></p>
+    </footer>
+
+    <script>
+        const TASK_ID = {{ (("\"" + task_id + "\"") if task_id else "null") | safe }};
+        const SAVED_RESULT_PATH = {{ (("\"" + saved_result_path + "\"") if saved_result_path is defined and saved_result_path else "null") | safe }};
+    </script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

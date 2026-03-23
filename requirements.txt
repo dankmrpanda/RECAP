@@ -2,7 +2,12 @@
 openai>=1.50.0
 python-dotenv>=1.0.0
 tqdm>=4.66.0
-pathlib>=1.0.1
+
+# Web Demo Dependencies
+flask>=3.0.0
+ebooklib>=0.18
+PyMuPDF>=1.24.0
+beautifulsoup4>=4.12.0
 
 # AI/ML Libraries
 sentence-transformers>=3.0.0

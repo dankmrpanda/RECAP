@@ -1,2 +1,17 @@
 # Ignore macOS .DS_Store files everywhere in the repository
 .DS_Store
+
+# Environment / API keys
+.env
+
+# Uploads and results (generated at runtime)
+demo/uploads/
+Results/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/

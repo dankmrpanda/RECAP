@@ -1,0 +1,16 @@
+.git
+.env
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+Results
+demo/uploads
+.DS_Store
+.gitignore
+.dockerignore
+EchoTrace-Paper-Results
+Papers_arXiv_Crawler
+Public_Domain

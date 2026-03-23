@@ -127,6 +127,36 @@ Results/
 ```
 
 
+## 🖥️ Demo (Docker)
+
+For a visual, no-code demo — ideal for publishers or anyone who wants to test RECAP without programming:
+
+### Quick Start
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/avduarte333/RECAP.git
+cd RECAP
+
+# 2. Configure your API keys
+cp .env.example .env
+# Edit .env and add your API keys (you only need the ones for the models you'll use)
+
+# 3. Build and run
+docker compose up --build
+
+# 4. Open your browser
+# Go to http://localhost:5000
+```
+
+### What You Can Do
+
+1. **Upload a book** — drag & drop a `.txt`, `.epub`, or `.pdf` file
+2. **Choose models** — pick which LLMs to use for extraction, feedback, and evaluation
+3. **Watch progress** — real-time logs stream as the pipeline runs
+4. **Explore results** — side-by-side comparison of original text vs. LLM extraction, with match highlighting and scores
+
+
 ## 📚 Citation
 
 If you use this framework in your research, please cite our work:

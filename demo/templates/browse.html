@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RECAP — Results Browser</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-inner">
+            <a href="/" class="logo">
+                <span class="logo-text">RECAP</span>
+                <span class="logo-badge">v2.1</span>
+            </a>
+            <nav class="nav">
+                <a href="/" class="nav-link">Extract</a>
+                <a href="/results" class="nav-link active">Results</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main">
+        <section class="card">
+            <div class="card-header">
+                <h2>Saved Results</h2>
+                <p class="card-desc">click any result to view its extraction data</p>
+            </div>
+            <div id="results-list" class="saved-results-list">
+                <p class="browse-loading">Loading...</p>
+            </div>
+            <div id="empty-state" class="browse-empty hidden">
+                <p>No results yet.</p>
+                <p class="card-desc">Run an extraction from the <a href="/">Extract</a> page to get started.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>RECAP — <a href="https://arxiv.org/abs/2510.25941" target="_blank">Paper</a> ·
+        <a href="https://github.com/avduarte333/RECAP" target="_blank">GitHub</a></p>
+    </footer>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", async () => {
+            const list = document.getElementById("results-list");
+            const empty = document.getElementById("empty-state");
+
+            try {
+                const resp = await fetch("/api/saved-results");
+                const files = await resp.json();
+
+                list.innerHTML = "";
+
+                if (files.length === 0) {
+                    empty.classList.remove("hidden");
+                    return;
+                }
+
+                files.forEach(f => {
+                    const item = document.createElement("a");
+                    item.href = `/view/${encodeURIComponent(f.path)}`;
+                    item.className = "saved-result-item";
+
+                    const date = new Date(f.modified * 1000);
+                    const dateStr = date.toLocaleDateString() + " " +
+                        date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+
+                    const sizeStr = formatBytes(f.size);
+
+                    item.innerHTML = `
+                        <div class="saved-result-info">
+                            <span class="saved-result-name">${escapeHtml(f.name)}</span>
+                            <span class="saved-result-meta">${sizeStr} &middot; ${dateStr}</span>
+                        </div>
+                        <span class="saved-result-arrow">&rarr;</span>
+                    `;
+                    list.appendChild(item);
+                });
+            } catch (err) {
+                list.innerHTML = '<p class="browse-loading">Failed to load results.</p>';
+            }
+        });
+
+        function escapeHtml(text) {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return "0 B";
+            const k = 1024;
+            const sizes = ["B", "KB", "MB", "GB"];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+        }
+    </script>
+</body>
+</html>
