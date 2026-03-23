@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''Code/book_preprocessor.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''Code/extraction_utils.py''\\).read\\(\\)\\); print\\(''extraction_utils.py OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''Code/feedback_agent.py''\\).read\\(\\)\\); print\\(''feedback_agent.py OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''demo/app.py''\\).read\\(\\)\\); print\\(''app.py OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''Code/extraction_utils.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''extraction_utils.py OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''Code/feedback_agent.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''feedback_agent.py OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''demo/app.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''app.py OK''\\)\")",
+      "Bash(python3:*)"
     ]
   }
 }

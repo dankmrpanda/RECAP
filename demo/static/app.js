@@ -72,6 +72,67 @@ function initUploadPage() {
     const submitBtn = document.getElementById("submit-btn");
     const submitError = document.getElementById("submit-error");
 
+    // Source toggle (Upload New vs Previously Uploaded)
+    const toggleUpload = document.getElementById("toggle-upload");
+    const toggleExisting = document.getElementById("toggle-existing");
+    const uploadNewSection = document.getElementById("upload-new-section");
+    const existingSection = document.getElementById("existing-books-section");
+    const existingSelect = document.getElementById("existing-book-select");
+    const noBooksMsg = document.getElementById("no-books-msg");
+
+    let sourceMode = "upload"; // "upload" or "existing"
+    let existingBooksLoaded = false;
+
+    toggleUpload.addEventListener("click", () => {
+        sourceMode = "upload";
+        toggleUpload.classList.add("active");
+        toggleExisting.classList.remove("active");
+        uploadNewSection.classList.remove("hidden");
+        existingSection.classList.add("hidden");
+        // Update submit button state based on file selection
+        submitBtn.disabled = !selectedFile;
+    });
+
+    toggleExisting.addEventListener("click", () => {
+        sourceMode = "existing";
+        toggleExisting.classList.add("active");
+        toggleUpload.classList.remove("active");
+        existingSection.classList.remove("hidden");
+        uploadNewSection.classList.add("hidden");
+        if (!existingBooksLoaded) loadExistingBooks();
+        submitBtn.disabled = !existingSelect.value;
+    });
+
+    existingSelect.addEventListener("change", () => {
+        if (sourceMode === "existing") {
+            submitBtn.disabled = !existingSelect.value;
+        }
+    });
+
+    async function loadExistingBooks() {
+        try {
+            const resp = await fetch("/api/uploaded-books");
+            const books = await resp.json();
+            existingBooksLoaded = true;
+            existingSelect.innerHTML = "";
+            if (books.length === 0) {
+                existingSelect.classList.add("hidden");
+                noBooksMsg.classList.remove("hidden");
+                return;
+            }
+            noBooksMsg.classList.add("hidden");
+            existingSelect.classList.remove("hidden");
+            existingSelect.appendChild(new Option("-- Select a book --", ""));
+            for (const book of books) {
+                const sizeStr = formatBytes(book.size);
+                existingSelect.appendChild(new Option(`${book.name} (${sizeStr})`, book.filename));
+            }
+        } catch (err) {
+            existingSelect.innerHTML = "";
+            existingSelect.appendChild(new Option("Failed to load books", ""));
+        }
+    }
+
     let selectedFile = null;
 
     // Drag & Drop
@@ -129,8 +190,12 @@ function initUploadPage() {
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
 
-        if (!selectedFile) {
+        if (sourceMode === "upload" && !selectedFile) {
             showError("Please select a book file first.");
+            return;
+        }
+        if (sourceMode === "existing" && !existingSelect.value) {
+            showError("Please select a previously uploaded book.");
             return;
         }
 
@@ -143,12 +208,53 @@ function initUploadPage() {
         }
 
         submitBtn.disabled = true;
-        submitBtn.querySelector(".btn-text").textContent = "Uploading...";
         hideError();
 
+        // Validate API keys before uploading
+        submitBtn.querySelector(".btn-text").textContent = "Validating keys...";
+        try {
+            const validateResp = await fetch("/api/validate-keys", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    target_model: document.getElementById("target_model").value,
+                    feedback_model: document.getElementById("feedback_model").value,
+                    evaluation_model: document.getElementById("evaluation_model").value,
+                    preprocessing_model: document.getElementById("preprocessing_model").value,
+                    api_keys: {
+                        openai: document.getElementById("api_key_openai").value,
+                        gemini: document.getElementById("api_key_gemini").value,
+                        anthropic: document.getElementById("api_key_anthropic").value,
+                        deepseek: document.getElementById("api_key_deepseek").value,
+                    }
+                })
+            });
+            if (!validateResp.ok) {
+                const vdata = await validateResp.json();
+                showError((vdata.errors || ["API key validation failed"]).join("\n"));
+                submitBtn.disabled = false;
+                submitBtn.querySelector(".btn-text").textContent = "Start Extraction";
+                return;
+            }
+        } catch (err) {
+            showError("Could not validate API keys. Check your connection.");
+            submitBtn.disabled = false;
+            submitBtn.querySelector(".btn-text").textContent = "Start Extraction";
+            return;
+        }
+
+        submitBtn.querySelector(".btn-text").textContent = "Uploading...";
+
         const formData = new FormData(form);
-        // The hidden file input might not have the dropped file, so add it explicitly
-        formData.set("file", selectedFile);
+        if (sourceMode === "upload") {
+            // The hidden file input might not have the dropped file, so add it explicitly
+            formData.set("file", selectedFile);
+            formData.delete("existing_file");
+        } else {
+            // Remove file field, use existing_file instead
+            formData.delete("file");
+            formData.set("existing_file", existingSelect.value);
+        }
 
         try {
             const resp = await fetch("/upload", { method: "POST", body: formData });
@@ -233,6 +339,7 @@ function initResultsPage() {
 
     // Connect to SSE
     const evtSource = new EventSource(`/status/${TASK_ID}`);
+    let hasStructuredProgress = false;
 
     evtSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
@@ -259,10 +366,12 @@ function initResultsPage() {
 
             logContainer.scrollTop = logContainer.scrollHeight;
 
-            // Update progress heuristic
-            const lineCount = logOutput.textContent.split("\n").length;
-            const estimatedProgress = Math.min(90, 5 + lineCount * 2);
-            progressBar.style.width = estimatedProgress + "%";
+            // Fallback progress heuristic (only before structured progress arrives)
+            if (!hasStructuredProgress) {
+                const lineCount = logOutput.textContent.split("\n").length;
+                const estimatedProgress = Math.min(25, 5 + lineCount);
+                progressBar.style.width = estimatedProgress + "%";
+            }
 
             // Update status text from log content
             if (msg.includes("Initializing Pipeline")) {
@@ -275,22 +384,42 @@ function initResultsPage() {
                 statusText.textContent = "Preprocessing book...";
             } else if (msg.includes("Step 2")) {
                 statusText.textContent = "Running RECAP extraction...";
-                progressBar.style.width = "30%";
+                if (!hasStructuredProgress) progressBar.style.width = "30%";
             } else if (msg.includes("Segmenting chapter")) {
                 statusText.textContent = msg.replace("[Preprocessor] ", "");
             } else if (msg.includes("Cleaning non-book")) {
                 statusText.textContent = "Cleaning non-book content...";
-            } else if (msg.includes("Performing") || msg.includes("Processing event")) {
-                statusText.textContent = msg;
-            } else if (msg.includes("Refinement") || msg.includes("refinement")) {
-                statusText.textContent = "Running feedback refinement...";
-            } else if (msg.includes("Prefix") || msg.includes("prefix")) {
-                statusText.textContent = "Prefix probing...";
-            } else if (msg.includes("Jailbreak") || msg.includes("jailbreak")) {
-                statusText.textContent = "Jailbreak extraction...";
-            } else if (msg.includes("Calculating metrics") || msg.includes("metrics")) {
-                statusText.textContent = "Calculating metrics...";
             }
+        }
+
+        // Structured progress: event completion count
+        if (data.type === "progress") {
+            hasStructuredProgress = true;
+            const pct = data.phase === "preprocessing"
+                ? Math.round((data.current / Math.max(data.total, 1)) * 30)
+                : 30 + Math.round((data.current / Math.max(data.total, 1)) * 70);
+            progressBar.style.width = pct + "%";
+            if (data.phase === "extracting") {
+                statusText.textContent = `Extracting event ${data.current} of ${data.total}...`;
+            }
+        }
+
+        // Sub-event phase labels
+        if (data.type === "phase") {
+            const labels = {
+                "prefix_probing": "Prefix probing",
+                "agent_extraction": "Agent extraction",
+                "jailbreak_prompt": "Generating jailbreak",
+                "jailbreak_extraction": "Jailbreak extraction",
+                "feedback_loop": "Feedback refinement",
+            };
+            const label = labels[data.phase] || data.phase;
+            statusText.textContent = `${label}: ${data.event}`;
+        }
+
+        // Feedback loop iteration progress
+        if (data.type === "feedback") {
+            statusText.textContent = `Refinement ${data.iteration}/${data.max_iterations} (ROUGE-L: ${(data.rouge_score * 100).toFixed(1)}%)`;
         }
 
         if (data.type === "paused") {
@@ -382,6 +511,15 @@ async function loadResults() {
 
 
 function renderResultsData(data, summaryStats, chapterNav, eventsContainer) {
+    // Render pipeline log if present
+    const pipelineLog = data.pipeline_log || [];
+    const logCard = document.getElementById("pipeline-log-card");
+    const logOutput = document.getElementById("pipeline-log-output");
+    if (logCard && logOutput && pipelineLog.length > 0) {
+        logOutput.textContent = pipelineLog.join("\n");
+        logCard.classList.remove("hidden");
+    }
+
     // Count stats
     let totalEvents = 0;
     let totalExtracted = 0;
@@ -422,6 +560,17 @@ function renderResultsData(data, summaryStats, chapterNav, eventsContainer) {
         </div>
     `;
 
+    // Add download button
+    const downloadUrl = TASK_ID
+        ? `/api/download/${TASK_ID}`
+        : (SAVED_RESULT_PATH ? `/api/download-saved/${encodeURIComponent(SAVED_RESULT_PATH)}` : null);
+    if (downloadUrl) {
+        const dlBox = document.createElement("div");
+        dlBox.className = "stat-box";
+        dlBox.innerHTML = `<a href="${downloadUrl}" class="ctrl-btn" style="text-decoration:none;display:inline-block;margin-top:0.25rem;">Download JSON</a>`;
+        summaryStats.appendChild(dlBox);
+    }
+
     // Render chapter navigation
     chapterNav.innerHTML = "";
     chapters.forEach((ch, idx) => {
@@ -432,10 +581,39 @@ function renderResultsData(data, summaryStats, chapterNav, eventsContainer) {
         btn.addEventListener("click", () => {
             document.querySelectorAll(".chapter-btn").forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
+            // Reset filters on chapter switch
+            const searchEl = document.getElementById("event-search");
+            const filterEl = document.getElementById("event-status-filter");
+            if (searchEl) searchEl.value = "";
+            if (filterEl) filterEl.value = "all";
             renderChapterEvents(chapters[idx], idx);
         });
         chapterNav.appendChild(btn);
     });
+
+    // Add filter bar
+    let filterBar = document.getElementById("event-filter-bar");
+    if (!filterBar) {
+        filterBar = document.createElement("div");
+        filterBar.id = "event-filter-bar";
+        filterBar.className = "card filter-bar";
+        filterBar.innerHTML = `
+            <input type="text" id="event-search" class="filter-input"
+                   placeholder="Search events by title or text...">
+            <select id="event-status-filter" class="filter-select">
+                <option value="all">All events</option>
+                <option value="extracted">Extracted only</option>
+                <option value="blocked">Blocked only</option>
+                <option value="high">High match (70%+)</option>
+                <option value="mid">Mid match (30–70%)</option>
+                <option value="low">Low match (&lt;30%)</option>
+            </select>
+        `;
+        eventsContainer.parentElement.insertBefore(filterBar, eventsContainer);
+
+        document.getElementById("event-search").addEventListener("input", _applyEventFilters);
+        document.getElementById("event-status-filter").addEventListener("change", _applyEventFilters);
+    }
 
     // Render first chapter events
     if (chapters.length > 0) {
@@ -443,54 +621,83 @@ function renderResultsData(data, summaryStats, chapterNav, eventsContainer) {
     }
 }
 
+// Module-level state for filtering
+let _currentChapter = null;
+let _currentChapterIdx = 0;
 
-function renderChapterEvents(chapter, chapterIdx) {
+function _applyEventFilters() {
+    const searchText = (document.getElementById("event-search")?.value || "").toLowerCase();
+    const statusFilter = document.getElementById("event-status-filter")?.value || "all";
+    if (_currentChapter) {
+        renderChapterEvents(_currentChapter, _currentChapterIdx, searchText, statusFilter);
+    }
+}
+
+function _getEventExtractionInfo(ev) {
+    const goldText = ev.text_segment || "";
+    const llm = ev.LLM_completions || {};
+    const agent = llm.Agent_Extraction || {};
+
+    let extractedText = "";
+    let extractionLabel = "No extraction";
+
+    const refinedKeys = Object.keys(agent)
+        .filter(k => k.startsWith("simple_agent_extraction_refined_") && k.match(/_\d+$/))
+        .sort((a, b) => parseInt(b.split("_").pop()) - parseInt(a.split("_").pop()));
+
+    if (refinedKeys.length > 0) {
+        const best = agent[refinedKeys[0]];
+        extractedText = typeof best === "object" ? (best.text || "") : (best || "");
+        extractionLabel = `Refined (${refinedKeys[0].split("_").pop()})`;
+    } else if (agent.simple_agent_jailbreak) {
+        extractedText = agent.simple_agent_jailbreak;
+        extractionLabel = "Jailbreak";
+    } else if (agent.simple_agent_extraction) {
+        extractedText = agent.simple_agent_extraction;
+        extractionLabel = "Agent";
+    } else if (llm["prefix-probing"]) {
+        extractedText = llm["prefix-probing"];
+        extractionLabel = "Prefix Probing";
+    }
+
+    const isBlocked = extractedText.includes("MODEL_RESPONSE_BLOCKED") ||
+                      extractedText.startsWith("Error at Chapter");
+    const score = isBlocked ? 0 : computeSimpleOverlap(goldText, extractedText);
+
+    return { goldText, extractedText, extractionLabel, isBlocked, score };
+}
+
+
+function renderChapterEvents(chapter, chapterIdx, searchText, statusFilter) {
+    _currentChapter = chapter;
+    _currentChapterIdx = chapterIdx;
+    searchText = searchText || "";
+    statusFilter = statusFilter || "all";
+
     const container = document.getElementById("events-container");
     container.innerHTML = "";
 
     const events = chapter.events || [];
     events.forEach((ev, evIdx) => {
+        const info = _getEventExtractionInfo(ev);
+
+        // Apply filters
+        if (searchText) {
+            const title = (ev.title || "").toLowerCase();
+            const text = (info.goldText || "").toLowerCase();
+            if (!title.includes(searchText) && !text.includes(searchText)) return;
+        }
+        if (statusFilter === "extracted" && info.isBlocked) return;
+        if (statusFilter === "blocked" && !info.isBlocked) return;
+        if (statusFilter === "high" && (info.isBlocked || info.score < 0.7)) return;
+        if (statusFilter === "mid" && (info.isBlocked || info.score < 0.3 || info.score >= 0.7)) return;
+        if (statusFilter === "low" && (info.isBlocked || info.score >= 0.3)) return;
+
+        const { goldText, extractedText, extractionLabel, isBlocked, score } = info;
+        const scoreClass = score >= 0.7 ? "score-high" : (score >= 0.3 ? "score-mid" : "score-low");
+
         const card = document.createElement("div");
         card.className = "card event-card";
-
-        const goldText = ev.text_segment || "";
-        const llm = ev.LLM_completions || {};
-        const agent = llm.Agent_Extraction || {};
-
-        // Get the best extraction text
-        let extractedText = "";
-        let extractionLabel = "No extraction";
-
-        // Try refined versions first, then jailbreak, then simple
-        const refinedKeys = Object.keys(agent)
-            .filter(k => k.startsWith("simple_agent_extraction_refined_") && k.match(/_\d+$/))
-            .sort((a, b) => {
-                const numA = parseInt(a.split("_").pop());
-                const numB = parseInt(b.split("_").pop());
-                return numB - numA;
-            });
-
-        if (refinedKeys.length > 0) {
-            const best = agent[refinedKeys[0]];
-            extractedText = typeof best === "object" ? (best.text || "") : (best || "");
-            extractionLabel = `Refined (${refinedKeys[0].split("_").pop()})`;
-        } else if (agent.simple_agent_jailbreak) {
-            extractedText = agent.simple_agent_jailbreak;
-            extractionLabel = "Jailbreak";
-        } else if (agent.simple_agent_extraction) {
-            extractedText = agent.simple_agent_extraction;
-            extractionLabel = "Agent";
-        } else if (llm["prefix-probing"]) {
-            extractedText = llm["prefix-probing"];
-            extractionLabel = "Prefix Probing";
-        }
-
-        const isBlocked = extractedText.includes("MODEL_RESPONSE_BLOCKED") ||
-                          extractedText.startsWith("Error at Chapter");
-
-        // Simple ROUGE-L approximation (word overlap)
-        const score = isBlocked ? 0 : computeSimpleOverlap(goldText, extractedText);
-        const scoreClass = score >= 0.7 ? "score-high" : (score >= 0.3 ? "score-mid" : "score-low");
 
         card.innerHTML = `
             <div class="event-header" onclick="this.nextElementSibling.classList.toggle('open')">

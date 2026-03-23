@@ -71,6 +71,18 @@
                 </div>
             </div>
 
+            <!-- Pipeline Log (collapsible) -->
+            <div id="pipeline-log-card" class="card hidden" style="margin-bottom: 1.5rem;">
+                <div class="card-header" style="cursor: pointer;" onclick="document.getElementById('pipeline-log-body').classList.toggle('hidden'); this.querySelector('.toggle-arrow').textContent = document.getElementById('pipeline-log-body').classList.contains('hidden') ? '▶' : '▼';">
+                    <h2><span class="toggle-arrow">▶</span> Pipeline Log</h2>
+                </div>
+                <div id="pipeline-log-body" class="hidden">
+                    <div class="log-container" style="max-height: 400px;">
+                        <pre id="pipeline-log-output" class="log-output"></pre>
+                    </div>
+                </div>
+            </div>
+
             <!-- Events Detail -->
             <div id="events-container">
                 <!-- Filled by JS -->

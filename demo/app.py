@@ -79,7 +79,7 @@ def allowed_file(filename):
 # Provider defaults: first model in list is the default for that provider
 PROVIDER_DEFAULTS = {
     "gemini": "gemini-2.5-flash",
-    "openai": "gpt-4.1-mini",
+    "openai": "gpt-5.4-mini",
     "deepseek": "deepseek-chat",
     "anthropic": "claude-sonnet-4-6",
 }
@@ -155,21 +155,106 @@ def results_browser():
     return render_template("browse.html")
 
 
+@app.route("/api/validate-keys", methods=["POST"])
+def api_validate_keys():
+    """Validate that required API keys work before starting the pipeline."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    data = request.get_json() or {}
+    models = [data.get("target_model"), data.get("feedback_model"),
+              data.get("evaluation_model"), data.get("preprocessing_model")]
+    api_keys = data.get("api_keys", {})
+
+    # Determine which providers are needed based on selected models
+    needed = set()
+    for m in models:
+        if not m:
+            continue
+        ml = m.lower()
+        if "gemini" in ml:
+            needed.add("gemini")
+        elif "gpt" in ml or "o1" in ml or "o3" in ml or "o4" in ml:
+            needed.add("openai")
+        elif "claude" in ml:
+            needed.add("anthropic")
+        elif "deepseek" in ml:
+            needed.add("deepseek")
+
+    if not needed:
+        return jsonify({"valid": False, "errors": ["Could not determine required providers from selected models."]}), 400
+
+    PROVIDER_BASE_URLS = {
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "deepseek": "https://api.deepseek.com/v1/",
+    }
+
+    def _validate_provider(provider):
+        key = (api_keys.get(provider) or "").strip()
+        if not key:
+            key = os.environ.get(KEY_ENV_MAP.get(provider, ""), "").strip()
+        if not key:
+            return f"No API key provided for {provider} (required by selected models)"
+        try:
+            from openai import OpenAI
+            kwargs = {"api_key": key, "timeout": 10.0}
+            if provider in PROVIDER_BASE_URLS:
+                kwargs["base_url"] = PROVIDER_BASE_URLS[provider]
+            client = OpenAI(**kwargs)
+            # Lightweight auth check — tiny completion
+            test_model = PROVIDER_DEFAULTS.get(provider, "gpt-4o-mini")
+            client.chat.completions.create(
+                model=test_model,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=1,
+            )
+            return None  # success
+        except Exception as e:
+            err = str(e)
+            # Extract a concise message
+            if "authentication" in err.lower() or "api key" in err.lower() or "401" in err:
+                return f"{provider}: Invalid API key"
+            if "404" in err or "not found" in err.lower():
+                return None  # Model not found but key is valid
+            return f"{provider}: {err[:150]}"
+
+    errors = []
+    with ThreadPoolExecutor(max_workers=len(needed)) as pool:
+        results = pool.map(_validate_provider, needed)
+        errors = [e for e in results if e is not None]
+
+    if errors:
+        return jsonify({"valid": False, "errors": errors}), 400
+    return jsonify({"valid": True})
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
     """Handle book upload and start the extraction pipeline."""
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    existing_file = request.form.get("existing_file", "").strip()
 
-    file = request.files["file"]
-    if file.filename == "" or not allowed_file(file.filename):
-        return jsonify({"error": "Invalid file. Please upload a .txt, .epub, or .pdf file."}), 400
+    if existing_file:
+        # Use a previously uploaded book
+        app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
+        filepath = (app.config["UPLOAD_FOLDER"] / existing_file).resolve()
+        # Prevent path traversal
+        if not str(filepath).startswith(str(app.config["UPLOAD_FOLDER"].resolve())):
+            return jsonify({"error": "Invalid file path"}), 403
+        if not filepath.exists():
+            return jsonify({"error": "Selected file no longer exists"}), 404
+        filename = filepath.name
+    else:
+        if "file" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
 
-    # Save uploaded file
-    app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
-    filename = secure_filename(file.filename)
-    filepath = app.config["UPLOAD_FOLDER"] / filename
-    file.save(str(filepath))
+        file = request.files["file"]
+        if file.filename == "" or not allowed_file(file.filename):
+            return jsonify({"error": "Invalid file. Please upload a .txt, .epub, or .pdf file."}), 400
+
+        # Save uploaded file
+        app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
+        filename = secure_filename(file.filename)
+        filepath = app.config["UPLOAD_FOLDER"] / filename
+        file.save(str(filepath))
 
     # Get settings from form (defaults come from env-configured provider)
     default_provider = _get_default_provider()
@@ -275,6 +360,36 @@ def api_results(task_id):
     return jsonify(data)
 
 
+@app.route("/api/download/<task_id>")
+def api_download(task_id):
+    """Download extraction results as a JSON file."""
+    task = tasks.get(task_id)
+    if not task or not task.get("result_path"):
+        return jsonify({"error": "Results not available"}), 404
+    result_path = Path(task["result_path"])
+    if not result_path.exists():
+        return jsonify({"error": "File not found"}), 404
+    return send_from_directory(
+        str(result_path.parent), result_path.name,
+        as_attachment=True, mimetype="application/json"
+    )
+
+
+@app.route("/api/download-saved/<path:filepath>")
+def api_download_saved(filepath):
+    """Download a saved result JSON file."""
+    results_dir = app.config["RESULTS_FOLDER"]
+    target = (results_dir / filepath).resolve()
+    if not str(target).startswith(str(results_dir.resolve())):
+        return jsonify({"error": "Invalid path"}), 403
+    if not target.exists():
+        return jsonify({"error": "File not found"}), 404
+    return send_from_directory(
+        str(target.parent), target.name,
+        as_attachment=True, mimetype="application/json"
+    )
+
+
 @app.route("/api/task/<task_id>")
 def api_task(task_id):
     """Return task status."""
@@ -337,6 +452,23 @@ def api_cancel(task_id):
         q.put({"type": "log", "message": "✗ Pipeline cancelled. Progress has been saved."})
         q.put({"type": "cancelled", "message": "Pipeline cancelled"})
     return jsonify({"status": "cancelled"})
+
+
+@app.route("/api/uploaded-books")
+def api_uploaded_books():
+    """List all previously uploaded book files."""
+    uploads_dir = app.config["UPLOAD_FOLDER"]
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    books = []
+    for f in sorted(uploads_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if f.is_file() and f.suffix.lower() in {".txt", ".epub", ".pdf"}:
+            books.append({
+                "name": f.stem.replace("_", " ").replace("-", " "),
+                "filename": f.name,
+                "size": f.stat().st_size,
+                "modified": f.stat().st_mtime,
+            })
+    return jsonify(books)
 
 
 @app.route("/api/saved-results")
@@ -409,13 +541,27 @@ def _check_controls(task_id, log_fn):
         raise PipelineCancelled()
 
 
+def _save_pipeline_log(result_path: str, logs: list):
+    """Append the pipeline log to the result JSON file."""
+    try:
+        with open(result_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["pipeline_log"] = logs
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass  # Non-critical — don't break the pipeline for log persistence
+
+
 def _run_pipeline(task_id, filepath, target_model, feedback_model,
                   evaluation_model, preprocessing_model, api_keys):
     """Run the full pipeline in a background thread."""
     q = task_logs[task_id]
     task = tasks[task_id]
+    collected_logs = []
 
     def log(msg):
+        collected_logs.append(msg)
         q.put({"type": "log", "message": msg})
 
     try:
@@ -531,6 +677,21 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
 
             extraction_task._needs_processing = _checked_needs_processing
 
+            # Wire progress callbacks to SSE queue
+            extraction_task.event_callback = lambda done, total: q.put({
+                "type": "progress", "phase": "extracting",
+                "current": done, "total": total,
+            })
+            extraction_task.phase_callback = lambda event_title, phase: q.put({
+                "type": "phase", "event": event_title, "phase": phase,
+            })
+            extraction_task.feedback_callback = lambda info: q.put({
+                "type": "feedback",
+                "iteration": info["iteration"],
+                "max_iterations": info["max_iterations"],
+                "rouge_score": info.get("rouge_score", 0),
+            })
+
             extraction_task.run()
 
             # Find the results file
@@ -542,6 +703,10 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
             log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             log("✓ Extraction complete!")
             log(f"Results saved to: {result_path}")
+
+            # Save pipeline log into the result JSON so it persists for the results tab
+            _save_pipeline_log(result_path, collected_logs)
+
             q.put({"type": "complete", "message": "Pipeline complete!", "result_path": result_path})
 
         finally:
@@ -555,6 +720,7 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
             if Path(result_path).exists():
                 task["result_path"] = result_path
                 log(f"Progress saved to: {result_path}")
+                _save_pipeline_log(result_path, collected_logs)
         except NameError:
             pass
         task["status"] = "cancelled"

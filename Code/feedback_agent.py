@@ -14,7 +14,9 @@ def feedback_loop(feedback_client,
                   completion_text,
                   metrics_calc,
                   jailbreaking,
-                  structured):
+                  structured,
+                  skip_threshold=0.95,
+                  progress_callback=None):
     
 
     # --- Static system prompts ---
@@ -54,12 +56,26 @@ def feedback_loop(feedback_client,
             "text": completion_text,
             "refinement_prompt": None
         }
-    
-    current_score = metrics_calc.compute(gold_text=original_text, generated_text=completion_text)["rougeL"]
-    print(f"Starter Rouge-L score: {current_score:.4f}", file=sys.stderr, flush=True)
 
-    if current_score > 0.95:
-        print("Initial Rouge-L score is already very high. No refinements needed.", file=sys.stderr, flush=True)
+    original_words = len(original_text.split())
+    completion_words = len(completion_text.split())
+    print(f"[Feedback] Starting loop: extraction_model={extraction_model_name} "
+          f"feedback_model={feedback_model_name}", file=sys.stderr, flush=True)
+    print(f"[Feedback] Original text: {original_words} words, "
+          f"Completion text: {completion_words} words "
+          f"({completion_words/max(original_words,1)*100:.1f}% of original)",
+          file=sys.stderr, flush=True)
+    print(f"[Feedback] Completion preview: {repr(completion_text[:100])}",
+          file=sys.stderr, flush=True)
+    print(f"[Feedback] jailbreaking={jailbreaking} structured={structured} "
+          f"max_completion_tokens={int(len(original_text.split()) * 2) + 2000}",
+          file=sys.stderr, flush=True)
+
+    current_score = metrics_calc.compute(gold_text=original_text, generated_text=completion_text)["rougeL"]
+    print(f"[Feedback] Starter Rouge-L score: {current_score:.4f}", file=sys.stderr, flush=True)
+
+    if current_score > skip_threshold:
+        print(f"[Feedback] Initial Rouge-L score ({current_score:.4f}) exceeds threshold ({skip_threshold}). No refinements needed.", file=sys.stderr, flush=True)
         return new_refinements
 
     messages_generate = [
@@ -98,7 +114,15 @@ def feedback_loop(feedback_client,
                 }
             )
 
-            analysis_output = extract_json_content(guidance_resp.choices[0].message.content, key="text_segment_analysis")
+            guidance_finish = guidance_resp.choices[0].finish_reason
+            guidance_raw = guidance_resp.choices[0].message.content
+            print(f"[Feedback] Iter {iteration}: guidance finish_reason={guidance_finish} "
+                  f"raw_len={len(guidance_raw) if guidance_raw else 0}",
+                  file=sys.stderr, flush=True)
+
+            analysis_output = extract_json_content(guidance_raw, key="text_segment_analysis")
+            print(f"[Feedback] Iter {iteration}: guidance preview: {repr(analysis_output[:150])}",
+                  file=sys.stderr, flush=True)
 
             messages_generate.append({
                 "role": "user",
@@ -112,7 +136,7 @@ def feedback_loop(feedback_client,
             completion_args = {
                 "model": extraction_model_name,
                 "temperature": 0,
-                "max_completion_tokens": len(original_text.split(" ")) + 1000,
+                "max_completion_tokens": int(len(original_text.split()) * 2) + 2000,
                 "stream": jailbreaking,
                 "messages": messages_generate}
 
@@ -135,6 +159,7 @@ def feedback_loop(feedback_client,
 
             content = None
             streamed_chunks = []
+            finish_reason = None
 
             try:
                 gen_resp = extraction_client.chat.completions.create(**completion_args)
@@ -145,41 +170,88 @@ def feedback_loop(feedback_client,
                                 piece = chunk.choices[0].delta.content
                                 if piece:
                                     streamed_chunks.append(piece)
+                                fr = getattr(chunk.choices[0], 'finish_reason', None)
+                                if fr:
+                                    finish_reason = fr
                             except (AttributeError, IndexError, TypeError):
                                 continue
                     except Exception as stream_error:
-                        print(f"Streaming error: {stream_error}")
+                        print(f"[Feedback] Iter {iteration}: Streaming error: {stream_error}",
+                              file=sys.stderr, flush=True)
                     finally:
                         content = ''.join(streamed_chunks)
+                    print(f"[Feedback] Iter {iteration}: Stream finished: finish_reason={finish_reason} "
+                          f"chunks={len(streamed_chunks)} content_len={len(content)}",
+                          file=sys.stderr, flush=True)
                 else:
                     content = gen_resp.choices[0].message.content
+                    finish_reason = gen_resp.choices[0].finish_reason
+                    print(f"[Feedback] Iter {iteration}: Response: finish_reason={finish_reason} "
+                          f"content_len={len(content) if content else 0}",
+                          file=sys.stderr, flush=True)
+                    if hasattr(gen_resp, 'usage') and gen_resp.usage:
+                        u = gen_resp.usage
+                        thinking_tokens = getattr(u, 'completion_tokens_details', None)
+                        print(f"[Feedback] Iter {iteration}: Usage: prompt_tokens={u.prompt_tokens} "
+                              f"completion_tokens={u.completion_tokens} "
+                              f"total_tokens={u.total_tokens} "
+                              f"details={thinking_tokens}",
+                              file=sys.stderr, flush=True)
             except APIError as e:
-                print(f"OpenAI API returned an API Error: {e}")
+                print(f"[Feedback] Iter {iteration}: API Error: {e}", file=sys.stderr, flush=True)
 
             # ------------------------ Post-process the content -----------------------------
-            if content is None: refined_text = f"MODEL_RESPONSE_BLOCKED - {gen_resp.choices[0].finish_reason if not jailbreaking else 'stream_error'}"
+            if content is None:
+                refined_text = f"MODEL_RESPONSE_BLOCKED - {gen_resp.choices[0].finish_reason if not jailbreaking else 'stream_error'}"
+                print(f"[Feedback] Iter {iteration}: BLOCKED (content is None)",
+                      file=sys.stderr, flush=True)
             else:
                 refined_text = (extract_json_content(content, key="text_segment") if structured else content)
+                refined_words = len(refined_text.split())
+                print(f"[Feedback] Iter {iteration}: Refined output: {refined_words} words "
+                      f"(original={original_words}), "
+                      f"truncated={'YES' if refined_words < original_words * 0.5 else 'no'}",
+                      file=sys.stderr, flush=True)
+                print(f"[Feedback] Iter {iteration}: Output preview: {repr(refined_text[:100])}",
+                      file=sys.stderr, flush=True)
+                if finish_reason == "length":
+                    print(f"[Feedback] Iter {iteration}: WARNING: Output truncated due to max_completion_tokens!",
+                          file=sys.stderr, flush=True)
 
 
 
             messages_generate.append({"role": "assistant", "content": refined_text})
 
             # 3) Scoring (Rouge-L or other score)
-            print(f"Iteration {iteration}: computing Rouge-L...", file=sys.stderr, flush=True)
             new_score = metrics_calc.compute(
                 gold_text=original_text,
                 generated_text=refined_text
             )["rougeL"]
-            print(f"Iteration {iteration}: New Rouge-L score: {new_score:.4f}", file=sys.stderr, flush=True)
+            print(f"[Feedback] Iter {iteration}: Rouge-L: {current_score:.4f} -> {new_score:.4f} "
+                  f"(delta={new_score - current_score:+.4f}, threshold=+0.020)",
+                  file=sys.stderr, flush=True)
+
+            if progress_callback:
+                try:
+                    progress_callback({
+                        "iteration": iteration,
+                        "max_iterations": max_iterations,
+                        "rouge_score": new_score,
+                    })
+                except Exception:
+                    pass
 
         except Exception as e:
-            print(f"Error on iteration {iteration}: {e}. Stopping refinements.", file=sys.stderr, flush=True)
+            print(f"[Feedback] Iter {iteration}: EXCEPTION: {type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             break
 
         # 4) Only if strictly improved, write the refined version
         if new_score > (current_score + 0.020):
-            print(f"Iteration {iteration}: improved Rouge-L from {current_score:.4f} to {new_score:.4f}. Writing result.", file=sys.stderr, flush=True)
+            print(f"[Feedback] Iter {iteration}: IMPROVED {current_score:.4f} -> {new_score:.4f}. Saving.",
+                  file=sys.stderr, flush=True)
             current_score = new_score
 
             key = f"simple_agent_extraction_refined_{iteration}"
@@ -187,12 +259,17 @@ def feedback_loop(feedback_client,
                 "text": refined_text,
                 "refinement_prompt": analysis_output
             }
-            if current_score > 0.95:
-                print("Final Rouge-L score is very high. Stopping refinements.", file=sys.stderr, flush=True)
+            if current_score > skip_threshold:
+                print(f"[Feedback] Rouge-L ({current_score:.4f}) exceeds threshold ({skip_threshold}). Done.",
+                      file=sys.stderr, flush=True)
                 break
         else:
-            print(f"Iteration {iteration}: Not enough improvement. Stopping.", file=sys.stderr, flush=True)
+            print(f"[Feedback] Iter {iteration}: NO IMPROVEMENT ({current_score:.4f} -> {new_score:.4f}). Stopping.",
+                  file=sys.stderr, flush=True)
             break
+
+    print(f"[Feedback] Loop complete. Total refinements saved: {len(new_refinements)}",
+          file=sys.stderr, flush=True)
 
     
 

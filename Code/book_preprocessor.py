@@ -154,7 +154,7 @@ def _get_client(model_name: str, api_keys: Optional[dict] = None) -> tuple:
     if "gemini" in name:
         api_key = keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    elif "gpt" in name:
+    elif "gpt" in name or name.startswith("o") and any(c.isdigit() for c in name):
         api_key = keys.get("openai") or os.getenv("OPENAI_API_KEY", "")
         base_url = None
     elif "claude" in name:
@@ -199,44 +199,128 @@ def _llm_call(client: OpenAI, model_name: str, system_prompt: str,
 
 
 def _extract_json(text: str) -> dict:
-    """Extract JSON from an LLM response that may include markdown fences."""
+    """Extract JSON from an LLM response that may include markdown fences or be truncated."""
     s = text.strip()
     # Strip markdown code fences
     if s.startswith("```"):
         s = re.sub(r"^```(?:json)?\s*", "", s)
         s = re.sub(r"\s*```\s*$", "", s)
+
+    # First, try parsing as-is
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    # Try to extract the first JSON object from the text
+    match = re.search(r'\{', s)
+    if match:
+        s = s[match.start():]
+
+    # Attempt to repair truncated JSON by closing open structures
+    # This handles cases where the LLM response was cut off by max_tokens
+    for attempt in range(5):
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError as e:
+            err_msg = str(e)
+            if "Unterminated string" in err_msg:
+                # Close the unterminated string, then close remaining structures
+                s = s.rstrip()
+                # Remove any trailing partial escape sequence
+                if s.endswith("\\"):
+                    s = s[:-1]
+                s += '"'
+            elif "Expecting ',' delimiter" in err_msg or "Expecting value" in err_msg:
+                # Likely a truncated array/object — trim last partial element
+                s = s.rstrip().rstrip(",")
+            elif "Extra data" in err_msg:
+                # Multiple JSON objects — take only the first
+                pos = e.pos
+                s = s[:pos]
+                continue
+            else:
+                # Generic: try closing brackets
+                pass
+
+            # Count open/close braces and brackets to close them
+            open_braces = s.count("{") - s.count("}")
+            open_brackets = s.count("[") - s.count("]")
+            s = s.rstrip().rstrip(",")
+            s += "]" * max(0, open_brackets)
+            s += "}" * max(0, open_braces)
+
+    # Final attempt
     return json.loads(s)
+
+
+def _fuzzy_find(haystack: str, needle: str, start_from: int = 0) -> int:
+    """
+    Find needle in haystack with increasingly fuzzy matching.
+    Returns the index in haystack, or -1 if not found.
+    """
+    # 1. Exact match
+    idx = haystack.find(needle, start_from)
+    if idx != -1:
+        return idx
+
+    # 2. Case-insensitive
+    idx = haystack.lower().find(needle.lower(), start_from)
+    if idx != -1:
+        return idx
+
+    # 3. Normalized whitespace (collapse runs of whitespace to single space)
+    norm_needle = re.sub(r'\s+', ' ', needle.strip())
+    norm_haystack = re.sub(r'\s+', ' ', haystack)
+    idx = norm_haystack.lower().find(norm_needle.lower(), start_from)
+    if idx != -1:
+        # Map back to approximate position in original haystack
+        # by finding the same content nearby
+        snippet = norm_needle[:30]
+        nearby = haystack.lower().find(snippet.lower(), max(0, idx - 200))
+        return nearby if nearby != -1 else idx
+
+    # 4. Try first few words only (LLM may have paraphrased the rest)
+    words = needle.split()
+    for word_count in [6, 4, 3]:
+        if len(words) >= word_count:
+            prefix = " ".join(words[:word_count])
+            idx = haystack.lower().find(prefix.lower(), start_from)
+            if idx != -1:
+                return idx
+
+    return -1
 
 
 def _split_chapters(full_text: str, chapter_starts: list) -> list:
     """
     Split the full book text into chapter chunks using the detected start_text markers.
     Returns list of (chapter_title, chapter_text) tuples.
+    Uses fuzzy matching to handle minor LLM misquotes.
     """
-    chapters = []
+    # First pass: find all chapter start positions
+    found = []
     for i, ch in enumerate(chapter_starts):
-        start_text = ch["start_text"]
-        start_idx = full_text.find(start_text)
-        if start_idx == -1:
-            # Try case-insensitive
-            start_idx = full_text.lower().find(start_text.lower())
-        if start_idx == -1:
-            continue  # Skip if not found
+        start_text = ch.get("start_text", "")
+        if not start_text:
+            continue
+        idx = _fuzzy_find(full_text, start_text)
+        if idx != -1:
+            found.append((idx, ch["chapter_title"]))
 
-        # End is the start of the next chapter, or end of text
-        if i + 1 < len(chapter_starts):
-            next_start = chapter_starts[i + 1]["start_text"]
-            end_idx = full_text.find(next_start, start_idx + len(start_text))
-            if end_idx == -1:
-                end_idx = full_text.lower().find(next_start.lower(), start_idx + len(start_text))
-            if end_idx == -1:
-                end_idx = len(full_text)
-        else:
-            end_idx = len(full_text)
+    if not found:
+        return []
 
+    # Sort by position and deduplicate
+    found.sort(key=lambda x: x[0])
+
+    # Build chapter list
+    chapters = []
+    for i, (start_idx, title) in enumerate(found):
+        end_idx = found[i + 1][0] if i + 1 < len(found) else len(full_text)
         chapter_text = full_text[start_idx:end_idx].strip()
         if chapter_text:
-            chapters.append((ch["chapter_title"], chapter_text))
+            chapters.append((title, chapter_text))
 
     return chapters
 
@@ -406,10 +490,15 @@ def preprocess_book(
     client, model = _get_client(model_name, api_keys)
 
     # 3. Clean non-book content (headers, footers, front/back matter)
-    log("[Preprocessor] Cleaning non-book content...")
-    full_text = _clean_non_book_content(full_text, client, model, log=log)
-    cleaned_word_count = len(full_text.split())
-    log(f"[Preprocessor] {word_count - cleaned_word_count:,} words removed as non-book content. {cleaned_word_count:,} words remaining.")
+    #    Skip for plain .txt files — they rarely have front/back matter artifacts
+    file_ext = Path(filepath).suffix.lower()
+    if file_ext in (".epub", ".pdf"):
+        log("[Preprocessor] Cleaning non-book content...")
+        full_text = _clean_non_book_content(full_text, client, model, log=log)
+        cleaned_word_count = len(full_text.split())
+        log(f"[Preprocessor] {word_count - cleaned_word_count:,} words removed as non-book content. {cleaned_word_count:,} words remaining.")
+    else:
+        log("[Preprocessor] Skipping content cleaning (plain text file).")
 
     # 4. Detect chapters
     log("[Preprocessor] Detecting chapter boundaries...")
@@ -437,42 +526,100 @@ def preprocess_book(
         "chapters": []
     }
 
-    for idx, (ch_title, ch_text) in enumerate(chapters):
-        log(f"[Preprocessor] Segmenting chapter {idx + 1}/{len(chapters)}: {ch_title}")
+    # Maximum chars per LLM segmentation call.  The LLM must echo back every
+    # character as text_segment, so the *output* is always larger than the
+    # input.  Keeping input sections ≤ 12 000 chars (~2 500 words) ensures
+    # the output comfortably fits within a 32k-token response.
+    _SECTION_CHAR_LIMIT = 12000
 
-        # Truncate very long chapters to fit context
-        truncated = ch_text[:60000] if len(ch_text) > 60000 else ch_text
+    def _split_into_sections(text: str, limit: int = _SECTION_CHAR_LIMIT) -> list:
+        """Split text into sections of roughly `limit` chars, breaking at paragraph boundaries."""
+        if len(text) <= limit:
+            return [text]
 
+        paragraphs = text.split("\n\n")
+        sections = []
+        current = []
+        current_len = 0
+
+        for para in paragraphs:
+            para_len = len(para)
+            if current_len + para_len > limit and current:
+                sections.append("\n\n".join(current))
+                current = [para]
+                current_len = para_len
+            else:
+                current.append(para)
+                current_len += para_len
+
+        if current:
+            sections.append("\n\n".join(current))
+
+        return sections
+
+    def _segment_section(ch_title, section_text, section_label=""):
+        """Segment a single section of text into events via LLM."""
         try:
+            prompt_label = f"Chapter: {ch_title}"
+            if section_label:
+                prompt_label += f" ({section_label})"
             events_response = _llm_call(
                 client, model,
                 system_prompt=EVENT_SEGMENTATION_PROMPT,
-                user_prompt=f"Chapter: {ch_title}\n\n{truncated}",
-                max_tokens=16000,
+                user_prompt=f"{prompt_label}\n\n{section_text}",
+                max_tokens=32000,
             )
             events_data = _extract_json(events_response)
-            events = events_data.get("events", [])
+            return events_data.get("events", [])
         except Exception as e:
-            log(f"[Preprocessor] Warning: Failed to segment chapter '{ch_title}': {e}")
-            # Fallback: single event for the whole chapter
-            first_sentence = ch_text.split(".")[0] + "." if "." in ch_text else ch_text[:100]
-            last_sentence = ch_text.rstrip().rsplit(".", 1)
-            last_sentence = (last_sentence[0] + ".") if len(last_sentence) > 1 else ch_text[-100:]
-            events = [{
-                "title": ch_title,
+            log(f"[Preprocessor] Warning: Failed to segment '{ch_title}' {section_label}: {e}")
+            first_sentence = section_text.split(".")[0] + "." if "." in section_text else section_text[:100]
+            last_sentence = section_text.rstrip().rsplit(".", 1)
+            last_sentence = (last_sentence[0] + ".") if len(last_sentence) > 1 else section_text[-100:]
+            return [{
+                "title": f"{ch_title} {section_label}".strip(),
                 "characters": [],
-                "detailed_summary": ["Full chapter text"],
+                "detailed_summary": ["Full section text"],
                 "segmentation_boundaries": {
                     "first_sentence": first_sentence,
                     "last_sentence": last_sentence,
                 },
-                "text_segment": truncated,
+                "text_segment": section_text,
             }]
 
-        result["chapters"].append({
-            "chapter_title": ch_title,
-            "events": events,
-        })
+    def _segment_chapter(idx_title_text):
+        idx, ch_title, ch_text = idx_title_text
+        log(f"[Preprocessor] Segmenting chapter {idx + 1}/{len(chapters)}: {ch_title}")
+
+        sections = _split_into_sections(ch_text)
+
+        if len(sections) == 1:
+            events = _segment_section(ch_title, sections[0])
+        else:
+            log(f"[Preprocessor]   Chapter too large ({len(ch_text):,} chars) — split into {len(sections)} sections")
+            events = []
+            for sec_idx, section in enumerate(sections):
+                label = f"part {sec_idx + 1}/{len(sections)}"
+                log(f"[Preprocessor]   Segmenting {ch_title} {label} ({len(section):,} chars)")
+                events.extend(_segment_section(ch_title, section, label))
+
+        return idx, {"chapter_title": ch_title, "events": events}
+
+    # Parallelize chapter segmentation (up to 4 concurrent LLM calls)
+    from concurrent.futures import ThreadPoolExecutor
+    chapter_inputs = [(idx, ch_title, ch_text) for idx, (ch_title, ch_text) in enumerate(chapters)]
+    seg_workers = min(4, len(chapters))
+    if seg_workers > 1:
+        log(f"[Preprocessor] Segmenting {len(chapters)} chapters in parallel ({seg_workers} workers)...")
+        with ThreadPoolExecutor(max_workers=seg_workers) as pool:
+            chapter_results = list(pool.map(_segment_chapter, chapter_inputs))
+    else:
+        chapter_results = [_segment_chapter(ci) for ci in chapter_inputs]
+
+    # Sort by original index to preserve chapter order
+    chapter_results.sort(key=lambda x: x[0])
+    for _, ch_data in chapter_results:
+        result["chapters"].append(ch_data)
 
     total_events = sum(len(ch["events"]) for ch in result["chapters"])
     log(f"[Preprocessor] Done! {len(result['chapters'])} chapters, {total_events} events.")
