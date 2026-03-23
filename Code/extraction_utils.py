@@ -756,7 +756,7 @@ class MetricsCalculationTask:
         self,
         extraction_json_path: str,
         min_tokens: int = 40,
-        max_mismatch_tokens: int = 3
+        max_mismatch_tokens: int = 5
     ):
         """
         Initialize the Metrics Calculation Task.
