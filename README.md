@@ -142,12 +142,14 @@ cd RECAP
 cp .env.example .env
 # Edit .env and add your API keys (you only need the ones for the models you'll use)
 
-# 3. Build and run
-docker compose up --build
-
-# 4. Open your browser
-# Go to http://localhost:5000
+# 3. Launch (builds, starts, and opens the browser automatically)
+# Windows:
+launch.bat
+# Linux / macOS / Git Bash:
+./launch.sh
 ```
+
+> **Manual start:** If you prefer, you can still run `docker compose up --build` and open `http://localhost:5000` yourself.
 
 ### What You Can Do
 

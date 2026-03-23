@@ -226,6 +226,51 @@ body::before {
     margin-left: 32px;
 }
 
+.card-header-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.set-all-models {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding-top: 2px;
+}
+
+.set-all-models label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+
+.set-all-models select {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: border-color var(--transition);
+}
+
+.set-all-models select:hover {
+    border-color: var(--border-focus);
+}
+
+.set-all-models select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
 .step-badge {
     display: inline-flex;
     align-items: center;

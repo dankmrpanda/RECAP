@@ -83,6 +83,25 @@ function initUploadPage() {
     let sourceMode = "upload"; // "upload" or "existing"
     let existingBooksLoaded = false;
 
+    // "Set All" model selector
+    const setAllSelect = document.getElementById("set_all_model");
+    if (setAllSelect) {
+        setAllSelect.addEventListener("change", () => {
+            const val = setAllSelect.value;
+            if (!val) return;
+            const selects = ["target_model", "feedback_model", "evaluation_model", "preprocessing_model"];
+            selects.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    const option = el.querySelector('option[value="' + val + '"]');
+                    if (option) {
+                        el.value = val;
+                    }
+                }
+            });
+        });
+    }
+
     toggleUpload.addEventListener("click", () => {
         sourceMode = "upload";
         toggleUpload.classList.add("active");

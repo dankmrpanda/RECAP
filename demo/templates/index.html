@@ -71,8 +71,46 @@
             <!-- Settings Section -->
             <section class="card settings-card">
                 <div class="card-header">
-                    <h2><span class="step-badge">2</span> Configure Models</h2>
-                    <p class="card-desc">select the LLM for each pipeline step</p>
+                    <div class="card-header-row">
+                        <div>
+                            <h2><span class="step-badge">2</span> Configure Models</h2>
+                            <p class="card-desc">select the LLM for each pipeline step</p>
+                        </div>
+                        <div class="set-all-models">
+                            <label for="set_all_model">Set All</label>
+                            <select id="set_all_model">
+                                <option value="" disabled selected>— choose —</option>
+                                <optgroup label="Google Gemini">
+                                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Preview)</option>
+                                    <option value="gemini-3-flash-preview">Gemini 3 Flash (Preview)</option>
+                                    <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Preview)</option>
+                                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                                </optgroup>
+                                <optgroup label="OpenAI">
+                                    <option value="gpt-5.4">GPT-5.4</option>
+                                    <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+                                    <option value="gpt-5.4-nano">GPT-5.4 Nano</option>
+                                    <option value="gpt-4.1">GPT-4.1</option>
+                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                    <option value="o3">o3</option>
+                                    <option value="o3-pro">o3-pro</option>
+                                    <option value="o4-mini">o4-mini</option>
+                                    <option value="o3-mini">o3-mini</option>
+                                </optgroup>
+                                <optgroup label="Anthropic">
+                                    <option value="claude-opus-4-6">Claude Opus 4.6</option>
+                                    <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                                </optgroup>
+                                <optgroup label="DeepSeek">
+                                    <option value="deepseek-chat">DeepSeek V3.2 (Chat)</option>
+                                    <option value="deepseek-reasoner">DeepSeek V3.2 (Reasoner)</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div class="settings-grid">
                     <div class="setting-group">
