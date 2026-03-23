@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RECAP Pipeline Diagram</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e4e9;
+    --text-dim: #8b8fa3;
+    --accent: #6c8cff;
+    --accent-dim: #3d5299;
+    --green: #4ade80;
+    --green-dim: #1a3a2a;
+    --red: #f87171;
+    --red-dim: #3a1a1a;
+    --orange: #fb923c;
+    --orange-dim: #3a2a1a;
+    --purple: #a78bfa;
+    --purple-dim: #2a1a3a;
+    --cyan: #22d3ee;
+    --cyan-dim: #1a2a3a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    padding: 40px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin-bottom: 40px;
+  }
+
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* Connector arrows between stages */
+  .connector {
+    display: flex;
+    justify-content: center;
+    padding: 6px 0;
+  }
+  .connector svg { display: block; }
+
+  /* Stage cards */
+  .stage {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    position: relative;
+  }
+
+  .stage-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .stage-number {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .stage-title {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+
+  .stage-file {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    background: var(--bg);
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: auto;
+  }
+
+  .stage-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .stage-body.single { grid-template-columns: 1fr; }
+  .stage-body.triple { grid-template-columns: 1fr 1fr 1fr; }
+
+  .detail-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+
+  .detail-box h4 {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .detail-box p, .detail-box li {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  .detail-box ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .detail-box li::before {
+    content: ">";
+    color: var(--accent);
+    font-family: monospace;
+    margin-right: 6px;
+    font-weight: 700;
+  }
+
+  code {
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12px;
+    background: rgba(108, 140, 255, 0.1);
+    color: var(--accent);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* Color variants */
+  .s-blue .stage-number { background: var(--accent-dim); color: var(--accent); }
+  .s-green .stage-number { background: var(--green-dim); color: var(--green); }
+  .s-red .stage-number { background: var(--red-dim); color: var(--red); }
+  .s-orange .stage-number { background: var(--orange-dim); color: var(--orange); }
+  .s-purple .stage-number { background: var(--purple-dim); color: var(--purple); }
+  .s-cyan .stage-number { background: var(--cyan-dim); color: var(--cyan); }
+
+  .s-blue { border-color: var(--accent-dim); }
+  .s-green { border-color: var(--green-dim); }
+  .s-red { border-color: var(--red-dim); }
+  .s-orange { border-color: var(--orange-dim); }
+  .s-purple { border-color: var(--purple-dim); }
+  .s-cyan { border-color: var(--cyan-dim); }
+
+  .s-blue .detail-box h4 { color: var(--accent); }
+  .s-green .detail-box h4 { color: var(--green); }
+  .s-red .detail-box h4 { color: var(--red); }
+  .s-orange .detail-box h4 { color: var(--orange); }
+  .s-purple .detail-box h4 { color: var(--purple); }
+  .s-cyan .detail-box h4 { color: var(--cyan); }
+
+  /* Branch layout for verifier */
+  .branch-container {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0;
+    align-items: start;
+    margin-top: 8px;
+  }
+
+  .branch-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+
+  .branch-label.refused { background: var(--red-dim); color: var(--red); }
+  .branch-label.accepted { background: var(--green-dim); color: var(--green); }
+
+  .branch-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 20px;
+    color: var(--text-dim);
+    font-size: 20px;
+  }
+
+  /* Feedback loop indicator */
+  .loop-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--purple);
+    background: var(--purple-dim);
+    padding: 4px 10px;
+    border-radius: 6px;
+    margin-left: 12px;
+  }
+
+  .loop-badge svg { flex-shrink: 0; }
+
+  /* Parallel indicator */
+  .parallel-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--cyan);
+    background: var(--cyan-dim);
+    padding: 4px 10px;
+    border-radius: 6px;
+    margin-left: 12px;
+  }
+
+  /* Parameters table */
+  .params-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .param {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--surface);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  .param-key { color: var(--text-dim); }
+  .param-val { color: var(--text); font-weight: 600; font-family: monospace; }
+
+  /* Input card */
+  .input-card {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    padding: 20px 28px;
+    text-align: center;
+  }
+  .input-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+  .input-card p { font-size: 13px; color: var(--text-dim); }
+
+  .footer-note {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 12px;
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<h1>RECAP Pipeline</h1>
+<p class="subtitle">Reproducing Copyrighted Data from LLMs Training with an Agentic Pipeline &mdash; arXiv:2510.25941</p>
+
+<div class="pipeline">
+
+  <!-- Input -->
+  <div class="input-card">
+    <h3>0 &middot; User Input</h3>
+    <p>Book files (.txt, .epub, .pdf) or pre-processed EchoTrace JSON &mdash; uploaded via web UI or provided directly</p>
+  </div>
+
+  <div class="connector"><svg width="2" height="28"><line x1="1" y1="0" x2="1" y2="28" stroke="#2a2d3a" stroke-width="2" stroke-dasharray="4,4"/></svg></div>
+
+  <!-- Stage 1 -->
+  <div class="stage s-blue">
+    <div class="stage-header">
+      <div class="stage-number">1</div>
+      <div class="stage-title">Section Summary Agent</div>
+      <span class="stage-file">book_preprocessor.py</span>
+    </div>
+    <div class="stage-body">
+      <div class="detail-box">
+        <h4>Process</h4>
+        <ul>
+          <li>Extract plain text from .txt / .epub / .pdf</li>
+          <li>LLM detects chapter boundaries</li>
+          <li>Segment each chapter into 2-10 narrative events</li>
+          <li>Generate metadata per event via LLM</li>
+        </ul>
+      </div>
+      <div class="detail-box">
+        <h4>Output &mdash; EchoTrace JSON</h4>
+        <ul>
+          <li><code>chapter_title</code></li>
+          <li><code>title</code>, <code>characters</code></li>
+          <li><code>detailed_summary</code> (bullet points)</li>
+          <li><code>segmentation_boundaries</code> (first/last sentence)</li>
+          <li><code>text_segment</code> (gold verbatim text)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><svg width="2" height="28"><line x1="1" y1="0" x2="1" y2="28" stroke="#2a2d3a" stroke-width="2" stroke-dasharray="4,4"/></svg></div>
+
+  <!-- Stage 2 -->
+  <div class="stage s-green">
+    <div class="stage-header">
+      <div class="stage-number">2</div>
+      <div class="stage-title">Extraction Agent</div>
+      <span class="parallel-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        Parallel
+      </span>
+      <span class="stage-file">extraction_utils.py:491-560</span>
+    </div>
+    <div class="stage-body">
+      <div class="detail-box">
+        <h4>Prefix-Probing (EMNLP Baseline)</h4>
+        <p>
+          Prompt: <code>According to "BookName", please complete with X words: [first_sentence]</code>
+        </p>
+        <p style="margin-top:6px">Classic prefix continuation approach. Uses <code>temperature=0</code>.</p>
+      </div>
+      <div class="detail-box">
+        <h4>Agent Extraction (Dynamic Soft Prompting)</h4>
+        <p>
+          System: <em>"We are evaluating the capacity of language models to recall known literary texts..."</em>
+        </p>
+        <p style="margin-top:6px">Provides <code>chapter_title</code>, <code>characters</code>, <code>detailed_summary</code>, <code>first_sentence</code> as metadata context. Uses JSON structured output for GPT/Gemini models.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><svg width="2" height="28"><line x1="1" y1="0" x2="1" y2="28" stroke="#2a2d3a" stroke-width="2" stroke-dasharray="4,4"/></svg></div>
+
+  <!-- Stage 3 -->
+  <div class="stage s-red">
+    <div class="stage-header">
+      <div class="stage-number">3</div>
+      <div class="stage-title">Verbatim Verifier</div>
+      <span class="stage-file">extraction_evaluator_classifier.py</span>
+    </div>
+    <div class="stage-body single">
+      <div class="detail-box">
+        <h4>Binary Classification</h4>
+        <p>
+          Red-teaming classifier: <code>"Yes"</code> (valid extraction attempt) or <code>"No"</code> (refusal/irrelevant).
+          Uses evaluation model (default: Gemini-2.5-Flash).
+        </p>
+        <p style="margin-top:6px">
+          <strong>Optimization:</strong> Heuristic pre-filter skips LLM call when response is long (&ge;50 words) and contains no refusal phrases. Only calls classifier on ambiguous responses.
+        </p>
+      </div>
+    </div>
+    <div class="branch-container" style="margin-top: 16px;">
+      <div>
+        <div class="branch-label refused">Refused &rarr; Stage 4</div>
+        <div class="detail-box" style="border-color: var(--red-dim);">
+          <p style="font-size:12px">When <code>MODEL_RESPONSE_BLOCKED</code>, route to Jailbreaker to rephrase the prompt</p>
+        </div>
+      </div>
+      <div class="branch-arrow">&nbsp;</div>
+      <div>
+        <div class="branch-label accepted">Accepted &rarr; Stage 5</div>
+        <div class="detail-box" style="border-color: var(--green-dim);">
+          <p style="font-size:12px">Valid attempts (even if inaccurate) proceed directly to Feedback Agent for iterative refinement</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><svg width="2" height="28"><line x1="1" y1="0" x2="1" y2="28" stroke="#2a2d3a" stroke-width="2" stroke-dasharray="4,4"/></svg></div>
+
+  <!-- Stage 4 -->
+  <div class="stage s-orange">
+    <div class="stage-header">
+      <div class="stage-number">4</div>
+      <div class="stage-title">Jailbreaker</div>
+      <span class="stage-file">jailbreaker.py</span>
+    </div>
+    <div class="stage-body">
+      <div class="detail-box">
+        <h4>Narrative Tool Injection (Primary)</h4>
+        <p>
+          Frames extraction as a function call: <code>generate_literary_segment(chapter_title, characters, detailed_summary, opening_line)</code>
+        </p>
+        <p style="margin-top:6px">Static prompt &mdash; no LLM generation needed. Achieves &gt;75% success rate across all models.</p>
+      </div>
+      <div class="detail-box">
+        <h4>Past Conversion (Secondary)</h4>
+        <p>
+          Rewrites the extraction prompt in unreal past tense via a reformulator LLM call.
+        </p>
+        <p style="margin-top:6px">Available but not used by default. Paper found Narrative Injection sufficient for all tested models.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><svg width="2" height="28"><line x1="1" y1="0" x2="1" y2="28" stroke="#2a2d3a" stroke-width="2" stroke-dasharray="4,4"/></svg></div>
+
+  <!-- Stage 5 -->
+  <div class="stage s-purple">
+    <div class="stage-header">
+      <div class="stage-number">5</div>
+      <div class="stage-title">Feedback Agent</div>
+      <span class="loop-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        Up to 5 iterations
+      </span>
+      <span class="stage-file">feedback_agent.py</span>
+    </div>
+    <div class="stage-body triple">
+      <div class="detail-box">
+        <h4>Step A &mdash; Guidance</h4>
+        <p>Feedback model compares gold text vs. LLM output. Produces structured critique:</p>
+        <ul>
+          <li>Major Structural Issues</li>
+          <li>Missing Elements</li>
+          <li>Inaccurate Elements</li>
+        </ul>
+        <p style="margin-top:6px"><em>Never quotes or reveals correct content.</em></p>
+      </div>
+      <div class="detail-box">
+        <h4>Step B &mdash; Regeneration</h4>
+        <p>Target LLM receives feedback appended to conversation history and attempts an improved extraction.</p>
+        <p style="margin-top:6px">Uses same system/user prompt as original extraction (or jailbreak variant).</p>
+      </div>
+      <div class="detail-box">
+        <h4>Step C &mdash; Scoring</h4>
+        <p>ROUGE-L recall computed between gold and refined text.</p>
+        <ul>
+          <li>Save if delta &gt; <code>+0.020</code></li>
+          <li>Stop if score &gt; <code>0.95</code></li>
+          <li>Stop if no improvement</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><svg width="2" height="28"><line x1="1" y1="0" x2="1" y2="28" stroke="#2a2d3a" stroke-width="2" stroke-dasharray="4,4"/></svg></div>
+
+  <!-- Stage 6 -->
+  <div class="stage s-cyan">
+    <div class="stage-header">
+      <div class="stage-number">6</div>
+      <div class="stage-title">Metrics Calculation</div>
+      <span class="stage-file">extraction_utils.py:MetricsCalculationTask</span>
+    </div>
+    <div class="stage-body">
+      <div class="detail-box">
+        <h4>Evaluation Metrics</h4>
+        <ul>
+          <li>Weighted ROUGE-L recall (micro-averaged by word count)</li>
+          <li>Contiguous span detection via <code>SequenceMatcher</code></li>
+          <li>Passage counting (spans &divide; 40-token blocks)</li>
+        </ul>
+      </div>
+      <div class="detail-box">
+        <h4>Parameters</h4>
+        <div class="params-grid">
+          <div class="param"><span class="param-key">min_tokens</span><span class="param-val">40</span></div>
+          <div class="param"><span class="param-key">max_mismatch_tokens</span><span class="param-val">5</span></div>
+          <div class="param"><span class="param-key">temperature</span><span class="param-val">0</span></div>
+          <div class="param"><span class="param-key">feedback_iters</span><span class="param-val">max 5</span></div>
+          <div class="param"><span class="param-key">skip_threshold</span><span class="param-val">0.95</span></div>
+          <div class="param"><span class="param-key">improvement_delta</span><span class="param-val">+0.020</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><svg width="2" height="28"><line x1="1" y1="0" x2="1" y2="28" stroke="#2a2d3a" stroke-width="2" stroke-dasharray="4,4"/></svg></div>
+
+  <!-- Output -->
+  <div class="input-card">
+    <h3>Output</h3>
+    <p style="margin-bottom:8px"><code>Results/BookName_timestamp/Extractions/*.json</code> &mdash; all extraction attempts per event</p>
+    <p><code>Results/BookName_timestamp/Metrics/*.json + *_report.txt</code> &mdash; ROUGE-L scores, contiguous spans, top passages</p>
+  </div>
+
+</div>
+
+<p class="footer-note">
+  RECAP codebase pipeline &mdash; matches arXiv:2510.25941 (verified 2026-03-23)
+  &nbsp;&middot;&nbsp; Entry points: <code>run_verbatim_extraction.py</code> &rarr; <code>run_metrics_calculation.py</code>
+  &nbsp;&middot;&nbsp; Web UI: <code>demo/app.py</code> (port 5000)
+</p>
+
+</body>
+</html>
