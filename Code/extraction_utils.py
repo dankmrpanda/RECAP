@@ -52,7 +52,8 @@ class BookExtractionTask:
         openai_keys: Optional[List[str]] = None,
         anthropic_keys: Optional[List[str]] = None,
         deepseek_keys: Optional[List[str]] = None,
-        enable_metrics: bool = True
+        enable_metrics: bool = True,
+        output_path_override: Optional[str] = None
     ):
         """
         Initialize the Book Extraction Task.
@@ -95,6 +96,9 @@ class BookExtractionTask:
         self.event_callback = None    # called(current, total) after each event
         self.phase_callback = None    # called(event_title, phase_name) at each sub-step
         self.feedback_callback = None # called({iteration, max_iterations, rouge_score})
+
+        # Output path override for resuming interrupted tasks
+        self._output_path_override = output_path_override
 
         # Initialize clients
         self._initialize_clients()
@@ -178,6 +182,13 @@ class BookExtractionTask:
             self.book_name = json_filename.split("_summary_")[0]
         else:
             self.book_name = json_filename
+
+        # If resuming an interrupted task, reuse the existing output path
+        if self._output_path_override:
+            self.output_path = Path(self._output_path_override)
+            self.output_dir = self.output_path.parent
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            return
 
         # Create safe model names for file paths
         safe_model_name = self.model_name.replace("/", "_")

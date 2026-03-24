@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir watchdog
 COPY . .
 
 # Create directories for uploads and results
-RUN mkdir -p demo/uploads demo/results
+RUN mkdir -p demo/uploads demo/results demo/task_state
 
 # Expose the web server port
 EXPOSE 5000

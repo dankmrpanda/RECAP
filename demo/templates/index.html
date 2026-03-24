@@ -19,6 +19,7 @@
             </a>
             <nav class="nav">
                 <a href="/" class="nav-link active">Extract</a>
+                <a href="/tasks" class="nav-link">Tasks</a>
                 <a href="/results" class="nav-link">Results</a>
             </nav>
         </div>
@@ -286,6 +287,15 @@
                 <p id="submit-error" class="submit-error hidden"></p>
             </div>
         </form>
+
+        <!-- Resumable Tasks (populated by JS) -->
+        <section id="resumable-tasks" class="card resumable-card hidden">
+            <div class="card-header">
+                <h2><span class="step-badge" style="background:var(--warning);color:#000">!</span> Interrupted Tasks</h2>
+                <p class="card-desc">these tasks were interrupted and can be resumed from where they left off</p>
+            </div>
+            <div id="resumable-tasks-list" class="resumable-tasks-list"></div>
+        </section>
     </main>
 
     <!-- Footer -->

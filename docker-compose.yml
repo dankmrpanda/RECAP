@@ -6,9 +6,10 @@ services:
     volumes:
       # Mount the entire project — code changes are reflected instantly
       - .:/app
-      # Persist uploads and results across container restarts
+      # Persist uploads, results, and task state across container restarts
       - ./demo/uploads:/app/demo/uploads
       - ./demo/results:/app/demo/results
+      - ./demo/task_state:/app/demo/task_state
     env_file:
       - .env
     environment:

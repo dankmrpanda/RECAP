@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RECAP — Tasks</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-inner">
+            <a href="/" class="logo">
+                <span class="logo-text">RECAP</span>
+                <span class="logo-badge">v2.1</span>
+            </a>
+            <nav class="nav">
+                <a href="/" class="nav-link">Extract</a>
+                <a href="/tasks" class="nav-link active">Tasks</a>
+                <a href="/results" class="nav-link">Results</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main">
+        <section class="card">
+            <div class="card-header">
+                <h2>All Tasks</h2>
+                <p class="card-desc">monitor running tasks, resume interrupted ones, or view completed results</p>
+            </div>
+            <div id="tasks-list" class="resumable-tasks-list">
+                <p class="browse-loading">Loading...</p>
+            </div>
+            <div id="empty-state" class="browse-empty hidden">
+                <p>No tasks yet.</p>
+                <p class="card-desc">Run an extraction from the <a href="/">Extract</a> page to get started.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>RECAP — <a href="https://arxiv.org/abs/2510.25941" target="_blank">Paper</a> ·
+        <a href="https://github.com/avduarte333/RECAP" target="_blank">GitHub</a></p>
+    </footer>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", async () => {
+            const list = document.getElementById("tasks-list");
+            const empty = document.getElementById("empty-state");
+
+            try {
+                const resp = await fetch("/api/tasks");
+                const tasks = await resp.json();
+
+                list.innerHTML = "";
+
+                if (tasks.length === 0) {
+                    empty.classList.remove("hidden");
+                    return;
+                }
+
+                tasks.forEach(t => {
+                    const item = document.createElement("div");
+                    item.className = "resumable-task-item";
+
+                    const statusMap = {
+                        "complete": { cls: "status-complete", label: "Complete" },
+                        "interrupted": { cls: "status-interrupted", label: "Interrupted" },
+                        "cancelled": { cls: "status-cancelled", label: "Cancelled" },
+                        "error": { cls: "status-error", label: "Error" },
+                        "starting": { cls: "status-running", label: "Starting" },
+                        "preprocessing": { cls: "status-running", label: "Preprocessing" },
+                        "extracting": { cls: "status-running", label: "Extracting" },
+                        "paused": { cls: "status-interrupted", label: "Paused" },
+                    };
+                    const info = statusMap[t.status] || { cls: "status-cancelled", label: t.status };
+                    const progress = t.progress || 0;
+
+                    const date = t.updated_at ? new Date(t.updated_at) : null;
+                    const dateStr = date ? date.toLocaleDateString() + " " +
+                        date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) : "";
+
+                    let actions = "";
+                    if (["interrupted", "cancelled", "error"].includes(t.status)) {
+                        actions = `
+                            <button class="resumable-btn resume-btn" data-id="${t.id}">Resume</button>
+                            <button class="resumable-btn dismiss-btn" data-id="${t.id}">Dismiss</button>
+                        `;
+                    } else if (["starting", "preprocessing", "extracting", "paused"].includes(t.status)) {
+                        actions = `<a href="/progress/${t.id}" class="resumable-btn resume-btn">Monitor</a>`;
+                    } else if (t.status === "complete" && t.result_path) {
+                        // Build view link from result_path
+                        actions = `<a href="/progress/${t.id}" class="resumable-btn resume-btn">View</a>
+                                   <button class="resumable-btn dismiss-btn" data-id="${t.id}">Dismiss</button>`;
+                    }
+
+                    item.innerHTML = `
+                        <div class="resumable-task-info">
+                            <div class="resumable-task-header">
+                                <span class="resumable-task-name">${escapeHtml(t.filename || "Unknown")}</span>
+                                <span class="resumable-task-badge ${info.cls}">${info.label}</span>
+                            </div>
+                            <span class="resumable-task-meta">
+                                ${escapeHtml(t.target_model || "")} &middot; ${progress}% &middot; ${dateStr}
+                            </span>
+                            ${t.error ? '<span class="resumable-task-error">' + escapeHtml(t.error).substring(0, 120) + '</span>' : ''}
+                        </div>
+                        <div class="resumable-task-actions">
+                            ${actions}
+                        </div>
+                    `;
+                    list.appendChild(item);
+                });
+
+                // Resume button handlers
+                list.querySelectorAll(".resume-btn[data-id]").forEach(btn => {
+                    btn.addEventListener("click", async () => {
+                        btn.disabled = true;
+                        btn.textContent = "Resuming...";
+                        try {
+                            const resp = await fetch(`/api/task/${btn.dataset.id}/restart`, { method: "POST" });
+                            const data = await resp.json();
+                            if (resp.ok && data.redirect) {
+                                window.location.href = data.redirect;
+                            } else {
+                                alert(data.error || "Failed to restart task");
+                                btn.disabled = false;
+                                btn.textContent = "Resume";
+                            }
+                        } catch (err) {
+                            alert("Failed to restart task");
+                            btn.disabled = false;
+                            btn.textContent = "Resume";
+                        }
+                    });
+                });
+
+                // Dismiss button handlers
+                list.querySelectorAll(".dismiss-btn").forEach(btn => {
+                    btn.addEventListener("click", async () => {
+                        try {
+                            await fetch(`/api/task/${btn.dataset.id}`, { method: "DELETE" });
+                            btn.closest(".resumable-task-item").remove();
+                            if (!list.children.length) empty.classList.remove("hidden");
+                        } catch (err) {
+                            // ignore
+                        }
+                    });
+                });
+
+            } catch (err) {
+                list.innerHTML = '<p class="browse-loading">Failed to load tasks.</p>';
+            }
+        });
+
+        function escapeHtml(text) {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

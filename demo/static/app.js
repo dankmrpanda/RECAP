@@ -304,6 +304,104 @@ function initUploadPage() {
         submitError.classList.add("hidden");
     }
 
+    // Load resumable tasks
+    loadResumableTasks();
+}
+
+
+async function loadResumableTasks() {
+    const section = document.getElementById("resumable-tasks");
+    const list = document.getElementById("resumable-tasks-list");
+    if (!section || !list) return;
+
+    try {
+        const resp = await fetch("/api/tasks?status=interrupted,cancelled,error");
+        const tasks = await resp.json();
+        if (!tasks.length) {
+            section.classList.add("hidden");
+            return;
+        }
+
+        list.innerHTML = "";
+        section.classList.remove("hidden");
+
+        tasks.forEach(t => {
+            const item = document.createElement("div");
+            item.className = "resumable-task-item";
+
+            const statusClass = t.status === "error" ? "status-error" :
+                                t.status === "interrupted" ? "status-interrupted" : "status-cancelled";
+            const statusLabel = t.status.charAt(0).toUpperCase() + t.status.slice(1);
+            const progress = t.progress || 0;
+
+            const date = t.updated_at ? new Date(t.updated_at) : null;
+            const dateStr = date ? date.toLocaleDateString() + " " +
+                date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) : "";
+
+            item.innerHTML = `
+                <div class="resumable-task-info">
+                    <div class="resumable-task-header">
+                        <span class="resumable-task-name">${escapeHtml(t.filename || "Unknown")}</span>
+                        <span class="resumable-task-badge ${statusClass}">${statusLabel}</span>
+                    </div>
+                    <span class="resumable-task-meta">
+                        ${escapeHtml(t.target_model || "")} &middot; ${progress}% &middot; ${dateStr}
+                    </span>
+                    ${t.error ? '<span class="resumable-task-error">' + escapeHtml(t.error).substring(0, 120) + '</span>' : ''}
+                </div>
+                <div class="resumable-task-actions">
+                    <button class="resumable-btn resume-btn" data-id="${t.id}">Resume</button>
+                    <button class="resumable-btn dismiss-btn" data-id="${t.id}">Dismiss</button>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+
+        // Resume button handlers
+        list.querySelectorAll(".resume-btn").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                btn.disabled = true;
+                btn.textContent = "Resuming...";
+                try {
+                    const resp = await fetch(`/api/task/${btn.dataset.id}/restart`, { method: "POST" });
+                    const data = await resp.json();
+                    if (resp.ok && data.redirect) {
+                        window.location.href = data.redirect;
+                    } else {
+                        alert(data.error || "Failed to restart task");
+                        btn.disabled = false;
+                        btn.textContent = "Resume";
+                    }
+                } catch (err) {
+                    alert("Failed to restart task");
+                    btn.disabled = false;
+                    btn.textContent = "Resume";
+                }
+            });
+        });
+
+        // Dismiss button handlers
+        list.querySelectorAll(".dismiss-btn").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                try {
+                    await fetch(`/api/task/${btn.dataset.id}`, { method: "DELETE" });
+                    btn.closest(".resumable-task-item").remove();
+                    if (!list.children.length) section.classList.add("hidden");
+                } catch (err) {
+                    // ignore
+                }
+            });
+        });
+
+    } catch (err) {
+        // Don't break the page if this fails
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 
@@ -752,24 +850,44 @@ function renderChapterEvents(chapter, chapterIdx, searchText, statusFilter) {
 
 /* ── Text Comparison Utilities ──────────────── */
 
+function _cleanWord(w) {
+    return w.toLowerCase().replace(/[^a-z0-9']/g, "");
+}
+
+function _wordFreqs(words) {
+    const freq = {};
+    words.forEach(w => {
+        const c = _cleanWord(w);
+        if (c.length > 0) freq[c] = (freq[c] || 0) + 1;
+    });
+    return freq;
+}
+
 function computeSimpleOverlap(gold, candidate) {
     if (!gold || !candidate) return 0;
-    const goldWords = gold.toLowerCase().split(/\s+/);
-    const candWords = candidate.toLowerCase().split(/\s+/);
-    if (goldWords.length === 0) return 0;
+    const goldFreq = _wordFreqs(gold.split(/\s+/));
+    const candFreq = _wordFreqs(candidate.split(/\s+/));
+    const goldTotal = Object.values(goldFreq).reduce((a, b) => a + b, 0);
+    if (goldTotal === 0) return 0;
 
-    const goldSet = new Set(goldWords);
+    // Count overlap capped by gold frequency (no inflation from repeats)
     let matches = 0;
-    candWords.forEach(w => { if (goldSet.has(w)) matches++; });
+    for (const word in candFreq) {
+        if (goldFreq[word]) {
+            matches += Math.min(candFreq[word], goldFreq[word]);
+        }
+    }
 
-    return Math.min(1, matches / goldWords.length);
+    return Math.min(1, matches / goldTotal);
 }
 
 
 function highlightMatches(gold, candidate) {
     if (!gold || !candidate) return escapeHtml(candidate);
 
-    const goldWords = new Set(gold.toLowerCase().split(/\s+/));
+    const goldWords = new Set(
+        gold.split(/\s+/).map(w => _cleanWord(w)).filter(w => w.length > 0)
+    );
     const candTokens = candidate.split(/(\s+)/);
     let result = "";
 
@@ -777,8 +895,8 @@ function highlightMatches(gold, candidate) {
         if (/^\s+$/.test(token)) {
             result += token;
         } else {
-            const clean = token.toLowerCase().replace(/[^a-z0-9']/g, "");
-            if (goldWords.has(clean) && clean.length > 2) {
+            const clean = _cleanWord(token);
+            if (clean.length > 2 && goldWords.has(clean)) {
                 result += `<span class="match">${escapeHtml(token)}</span>`;
             } else {
                 result += escapeHtml(token);
@@ -787,15 +905,6 @@ function highlightMatches(gold, candidate) {
     });
 
     return result;
-}
-
-
-/* ── Utilities ──────────────────────────────── */
-
-function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 

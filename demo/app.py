@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from queue import Queue
 
@@ -56,6 +57,57 @@ ALLOWED_EXTENSIONS = {"txt", "epub", "pdf"}
 tasks = {}   # task_id -> task info dict
 task_logs = {}  # task_id -> Queue of log messages
 task_controls = {}  # task_id -> {"pause": threading.Event, "cancel": bool}
+
+# ---------------------------------------------------------------------------
+# Task persistence (survives server restarts)
+# ---------------------------------------------------------------------------
+TASK_STATE_FOLDER = Path(__file__).resolve().parent / "task_state"
+TASK_STATE_FOLDER.mkdir(parents=True, exist_ok=True)
+_persist_lock = threading.Lock()
+
+
+def _persist_task(task_id):
+    """Write task metadata to disk (atomic write)."""
+    task = tasks.get(task_id)
+    if not task:
+        return
+    task["updated_at"] = datetime.now(timezone.utc).isoformat()
+    tmp = TASK_STATE_FOLDER / f"{task_id}.tmp"
+    dst = TASK_STATE_FOLDER / f"{task_id}.json"
+    with _persist_lock:
+        with open(str(tmp), "w", encoding="utf-8") as f:
+            json.dump(task, f, indent=2, ensure_ascii=False)
+        os.replace(str(tmp), str(dst))
+
+
+def _delete_task_state(task_id):
+    """Remove persisted task state file."""
+    path = TASK_STATE_FOLDER / f"{task_id}.json"
+    with _persist_lock:
+        if path.exists():
+            path.unlink()
+
+
+def _load_persisted_tasks():
+    """Load persisted tasks on startup. Mark in-progress ones as interrupted."""
+    for f in TASK_STATE_FOLDER.glob("*.json"):
+        try:
+            with open(str(f), "r", encoding="utf-8") as fp:
+                task = json.load(fp)
+            task_id = task.get("id")
+            if not task_id:
+                continue
+            # Tasks that were running when the server died → interrupted
+            if task["status"] in ("starting", "preprocessing", "extracting", "paused"):
+                task["status"] = "interrupted"
+            tasks[task_id] = task
+            # Re-persist if status changed
+            _persist_task(task_id)
+        except Exception:
+            continue
+
+
+_load_persisted_tasks()
 
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
@@ -153,6 +205,12 @@ def api_config():
 def results_browser():
     """Render the results browser page."""
     return render_template("browse.html")
+
+
+@app.route("/tasks")
+def tasks_page():
+    """Render the tasks page."""
+    return render_template("tasks.html")
 
 
 @app.route("/api/validate-keys", methods=["POST"])
@@ -292,8 +350,13 @@ def upload():
         "preprocessing_model": preprocessing_model,
         "progress": 0,
         "result_path": None,
+        "preprocessed_path": None,
         "error": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "api_provider_keys": [k for k in api_keys if api_keys[k]],
     }
+    _persist_task(task_id)
 
     # Set up task controls
     pause_event = threading.Event()
@@ -410,6 +473,7 @@ def api_pause(task_id):
         return jsonify({"error": f"Cannot pause task in state '{task['status']}'"}), 400
     ctrl["pause"].clear()  # Block the pipeline thread
     task["status"] = "paused"
+    _persist_task(task_id)
     q = task_logs.get(task_id)
     if q:
         q.put({"type": "log", "message": "⏸ Pipeline paused. Progress has been saved."})
@@ -427,6 +491,7 @@ def api_resume(task_id):
     if task["status"] != "paused":
         return jsonify({"error": f"Cannot resume task in state '{task['status']}'"}), 400
     task["status"] = "extracting"
+    _persist_task(task_id)
     ctrl["pause"].set()  # Unblock the pipeline thread
     q = task_logs.get(task_id)
     if q:
@@ -447,11 +512,95 @@ def api_cancel(task_id):
     ctrl["cancel"] = True
     ctrl["pause"].set()  # Unblock if paused so thread can exit
     task["status"] = "cancelled"
+    _persist_task(task_id)
     q = task_logs.get(task_id)
     if q:
         q.put({"type": "log", "message": "✗ Pipeline cancelled. Progress has been saved."})
         q.put({"type": "cancelled", "message": "Pipeline cancelled"})
     return jsonify({"status": "cancelled"})
+
+
+@app.route("/api/tasks")
+def api_tasks():
+    """Return all tasks, optionally filtered by status."""
+    status_filter = request.args.get("status", "").strip()
+    allowed = set(status_filter.split(",")) if status_filter else None
+    result = []
+    for t in tasks.values():
+        if allowed and t.get("status") not in allowed:
+            continue
+        result.append(t)
+    result.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
+    return jsonify(result)
+
+
+@app.route("/api/task/<task_id>/restart", methods=["POST"])
+def api_restart(task_id):
+    """Restart an interrupted, cancelled, or errored task."""
+    task = tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Unknown task"}), 404
+    if task["status"] not in ("interrupted", "cancelled", "error"):
+        return jsonify({"error": f"Cannot restart task in state '{task['status']}'"}), 400
+
+    # Validate the source file still exists
+    if not Path(task["filepath"]).exists():
+        return jsonify({"error": "Source file no longer exists on disk"}), 400
+
+    # Rebuild API keys from environment variables
+    api_keys = {}
+    for provider in task.get("api_provider_keys", []):
+        env_var = KEY_ENV_MAP.get(provider, "")
+        val = os.environ.get(env_var, "").strip()
+        if val:
+            api_keys[provider] = val
+
+    # Determine resume paths
+    resume_preprocessed_path = task.get("preprocessed_path")
+    resume_result_path = task.get("result_path")
+
+    # Reset task state
+    task["status"] = "starting"
+    task["error"] = None
+    task["progress"] = 0
+    _persist_task(task_id)
+
+    # Create fresh queue and controls
+    task_logs[task_id] = Queue()
+    pause_event = threading.Event()
+    pause_event.set()
+    task_controls[task_id] = {"pause": pause_event, "cancel": False}
+
+    # Spawn pipeline thread
+    thread = threading.Thread(
+        target=_run_pipeline,
+        args=(task_id, task["filepath"], task["target_model"],
+              task["feedback_model"], task["evaluation_model"],
+              task["preprocessing_model"], api_keys),
+        kwargs={
+            "resume_preprocessed_path": resume_preprocessed_path,
+            "resume_result_path": resume_result_path,
+        },
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({"task_id": task_id, "redirect": f"/progress/{task_id}"})
+
+
+@app.route("/api/task/<task_id>", methods=["DELETE"])
+def api_delete_task(task_id):
+    """Delete a task's persisted state (dismiss from UI)."""
+    task = tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Unknown task"}), 404
+    if task["status"] in ("starting", "preprocessing", "extracting", "paused"):
+        return jsonify({"error": "Cannot delete a running task"}), 400
+    tasks.pop(task_id, None)
+    task_logs.pop(task_id, None)
+    task_controls.pop(task_id, None)
+    _delete_task_state(task_id)
+    return jsonify({"status": "deleted"})
 
 
 @app.route("/api/uploaded-books")
@@ -554,7 +703,8 @@ def _save_pipeline_log(result_path: str, logs: list):
 
 
 def _run_pipeline(task_id, filepath, target_model, feedback_model,
-                  evaluation_model, preprocessing_model, api_keys):
+                  evaluation_model, preprocessing_model, api_keys,
+                  resume_preprocessed_path=None, resume_result_path=None):
     """Run the full pipeline in a background thread."""
     q = task_logs[task_id]
     task = tasks[task_id]
@@ -615,32 +765,44 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
             _check_controls(task_id, log)
 
             # ---- Step 1: Preprocess book ----
-            task["status"] = "preprocessing"
-            tlog("━━━ Step 1/2: Preprocessing Book ━━━")
-            tlog(f"Converting {Path(filepath).name} into structured format...")
+            if resume_preprocessed_path and Path(resume_preprocessed_path).exists():
+                tlog("━━━ Step 1/2: Preprocessing (skipped — resuming) ━━━")
+                preprocessed_path = Path(resume_preprocessed_path)
+                with open(str(preprocessed_path), "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+                total_events = sum(len(ch.get("events", [])) for ch in json_data.get("chapters", []))
+                tlog(f"Loaded preprocessed data: {len(json_data.get('chapters', []))} chapters, {total_events} events")
+            else:
+                task["status"] = "preprocessing"
+                _persist_task(task_id)
+                tlog("━━━ Step 1/2: Preprocessing Book ━━━")
+                tlog(f"Converting {Path(filepath).name} into structured format...")
 
-            json_data = preprocess_book(
-                filepath=filepath,
-                model_name=preprocessing_model,
-                api_keys=api_keys,
-                progress_callback=log,
-            )
+                json_data = preprocess_book(
+                    filepath=filepath,
+                    model_name=preprocessing_model,
+                    api_keys=api_keys,
+                    progress_callback=log,
+                )
 
-            # Save preprocessed JSON
-            book_name = json_data.get("book_name", Path(filepath).stem)
-            preprocessed_dir = Path(filepath).parent
-            preprocessed_path = preprocessed_dir / f"{book_name}_summary_{preprocessing_model}.json"
-            with open(str(preprocessed_path), "w", encoding="utf-8") as f:
-                json.dump(json_data, f, indent=2, ensure_ascii=False)
+                # Save preprocessed JSON
+                book_name = json_data.get("book_name", Path(filepath).stem)
+                preprocessed_dir = Path(filepath).parent
+                preprocessed_path = preprocessed_dir / f"{book_name}_summary_{preprocessing_model}.json"
+                with open(str(preprocessed_path), "w", encoding="utf-8") as f:
+                    json.dump(json_data, f, indent=2, ensure_ascii=False)
 
-            total_events = sum(len(ch.get("events", [])) for ch in json_data.get("chapters", []))
-            tlog(f"✓ Preprocessing complete: {len(json_data['chapters'])} chapters, {total_events} events")
+                total_events = sum(len(ch.get("events", [])) for ch in json_data.get("chapters", []))
+                tlog(f"✓ Preprocessing complete: {len(json_data['chapters'])} chapters, {total_events} events")
 
+            task["preprocessed_path"] = str(preprocessed_path)
+            _persist_task(task_id)
             _check_controls(task_id, log)
 
             # ---- Step 2: Run extraction ----
             task["status"] = "extracting"
             task["progress"] = 30
+            _persist_task(task_id)
             tlog("━━━ Step 2/2: Running RECAP Extraction ━━━")
 
             # Build keys lists
@@ -663,8 +825,13 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
                 openai_keys=openai_keys,
                 anthropic_keys=anthropic_keys,
                 deepseek_keys=deepseek_keys,
+                output_path_override=resume_result_path,
             )
             tlog("Extraction task ready.")
+
+            # Persist result_path so resume knows where to find partial results
+            task["result_path"] = str(extraction_task.output_path)
+            _persist_task(task_id)
 
             _check_controls(task_id, log)
 
@@ -699,6 +866,7 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
             task["result_path"] = result_path
             task["status"] = "complete"
             task["progress"] = 100
+            _persist_task(task_id)
             log("")
             log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             log("✓ Extraction complete!")
@@ -724,10 +892,12 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
         except NameError:
             pass
         task["status"] = "cancelled"
+        _persist_task(task_id)
 
     except Exception as e:
         task["status"] = "error"
         task["error"] = str(e)
+        _persist_task(task_id)
         log(f"✗ Error: {e}")
         q.put({"type": "error", "message": str(e)})
 
