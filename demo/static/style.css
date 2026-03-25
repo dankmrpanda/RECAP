@@ -1453,6 +1453,11 @@ body::before {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 12px;
+    overflow: hidden;
+}
+
+.chart-container--full {
+    grid-column: 1 / -1;
 }
 
 .chart-container svg {
@@ -1799,6 +1804,119 @@ body::before {
     padding: 24px;
     color: var(--text-dim);
     font-size: 13px;
+}
+
+/* ── Chart Expand & Modal ──────────────────── */
+
+.chart-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.chart-expand-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    font-size: 16px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition);
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.chart-expand-btn:hover {
+    border-color: var(--accent-border);
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.chart-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    backdrop-filter: blur(4px);
+}
+
+.chart-modal-overlay.active {
+    opacity: 1;
+}
+
+.chart-modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 90vw;
+    max-width: 1200px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+
+.chart-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+}
+
+.chart-modal-title {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.chart-modal-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    font-size: 16px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.chart-modal-close:hover {
+    border-color: var(--error);
+    color: var(--error);
+    background: var(--error-dim);
+}
+
+.chart-modal-body {
+    padding: 24px 32px;
+    overflow: visible;
+    flex: 1;
+}
+
+.chart-modal-body svg {
+    display: block;
+    margin: 0 auto;
+    max-height: 70vh;
 }
 
 /* ── Responsive ─────────────────────────────── */

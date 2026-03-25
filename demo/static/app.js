@@ -2066,10 +2066,19 @@ function renderCharts(data) {
     function makeChartDiv(titleText) {
         const container = document.createElement("div");
         container.className = "chart-container";
+        const titleRow = document.createElement("div");
+        titleRow.className = "chart-title-row";
         const title = document.createElement("div");
         title.className = "chart-title";
         title.textContent = titleText;
-        container.appendChild(title);
+        const expandBtn = document.createElement("button");
+        expandBtn.className = "chart-expand-btn";
+        expandBtn.innerHTML = "⛶";
+        expandBtn.title = "Expand chart";
+        expandBtn.addEventListener("click", () => _openChartModal(container, titleText));
+        titleRow.appendChild(title);
+        titleRow.appendChild(expandBtn);
+        container.appendChild(titleRow);
         grid.appendChild(container);
         return container;
     }
@@ -2152,6 +2161,277 @@ function renderCharts(data) {
     if (allScores.length > 0) {
         drawHistogram(makeChartDiv("ROUGE-L Score Distribution"), allScores);
     }
+
+    // 7. Per-Event ROUGE-L Line Chart
+    const perEventScores = [];
+    const chapterBoundaries = [];  // { startIdx, label }
+    let eventIdx = 0;
+    chapters.forEach((ch, ci) => {
+        chapterBoundaries.push({ startIdx: eventIdx, label: ch.chapter_title || `Ch ${ci + 1}` });
+        (ch.events || []).forEach(ev => {
+            const info = _getEventExtractionInfo(ev);
+            perEventScores.push(info.isBlocked ? 0 : info.score);
+            eventIdx++;
+        });
+    });
+
+    if (perEventScores.length > 0) {
+        const evChartDiv = makeChartDiv("ROUGE-L by Event (sequential)");
+        evChartDiv.classList.add("chart-container--full");
+        drawEventRougeLine(evChartDiv, perEventScores, chapterBoundaries);
+    }
+}
+
+
+function _renderEventRougeLine(container, scores, chapterBoundaries, isModal) {
+    const numCh = chapterBoundaries.length;
+    const margin = {top: 20, right: 30, bottom: 36, left: 60}; // increased right margin slightly for avg label
+    
+    // In modal, container has 32px horizontal padding each side that clientWidth includes
+    const paddingX = isModal ? 64 : 0; 
+    const containerWidth = (container.clientWidth || 400) - paddingX;
+    
+    const width = Math.max(200, containerWidth - margin.left - margin.right);
+    const height = (isModal ? 420 : 200) - margin.top - margin.bottom;
+    const totalW = width + margin.left + margin.right;
+    const totalH = height + margin.top + margin.bottom;
+
+    const svg = d3.select(container).append("svg")
+        .attr("width", totalW)
+        .attr("height", totalH)
+        .style("max-width", "100%")
+        .style("display", "block")
+      .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const x = d3.scaleLinear().domain([0, scores.length - 1]).range([0, width]);
+    const y = d3.scaleLinear().domain([0, 1]).range([height, 0]);
+
+    // Grid
+    svg.append("g").attr("class", "d3-grid")
+        .call(d3.axisLeft(y).ticks(5).tickSize(-width).tickFormat(""))
+        .selectAll("line").attr("stroke", "#2a2a2a");
+    svg.selectAll(".d3-grid .domain").remove();
+
+    // Y-axis
+    svg.append("g").attr("class", "d3-axis")
+        .call(d3.axisLeft(y).ticks(5).tickFormat(d3.format(".2f")))
+        .selectAll("text").attr("fill", "#888").style("font-size", "11px").style("font-family", "'JetBrains Mono', monospace");
+    svg.selectAll(".d3-axis .domain, .d3-axis line").attr("stroke", "#2a2a2a");
+
+    // Y-axis label
+    svg.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("y", -margin.left + 16).attr("x", -height / 2)
+        .attr("text-anchor", "middle")
+        .attr("fill", "#666").style("font-size", "10px").style("font-family", "'JetBrains Mono', monospace")
+        .text("ROUGE-L");
+
+    // Chapter boundary lines and labels on x-axis
+    const chapterColors = ["rgba(0,229,160,0.06)", "rgba(91,192,222,0.06)"];
+    // Compute available pixel width per chapter for label truncation
+    chapterBoundaries.forEach((ch, ci) => {
+        const nextStart = ci < chapterBoundaries.length - 1 ? chapterBoundaries[ci + 1].startIdx : scores.length;
+        const x0 = x(ch.startIdx);
+        const x1 = x(nextStart - 1);
+        const bandWidth = x1 - x0;
+        const midX = (x0 + x1) / 2;
+
+        // Alternating background bands
+        svg.append("rect")
+            .attr("x", x0).attr("y", 0)
+            .attr("width", Math.max(0, bandWidth))
+            .attr("height", height)
+            .attr("fill", chapterColors[ci % 2]);
+
+        // Vertical boundary line (skip first)
+        if (ci > 0) {
+            svg.append("line")
+                .attr("x1", x0).attr("x2", x0)
+                .attr("y1", 0).attr("y2", height)
+                .attr("stroke", "#3a3a3a").attr("stroke-width", 1)
+                .attr("stroke-dasharray", "3,3");
+        }
+
+        // Chapter number label below x-axis
+        const labelY = height + 14;
+        svg.append("text")
+            .attr("x", midX).attr("y", labelY)
+            .attr("text-anchor", "middle")
+            .attr("fill", "#666").style("font-size", "9px").style("font-family", "'JetBrains Mono', monospace")
+            .text(ci + 1);
+    });
+
+    // X-axis line
+    svg.append("line")
+        .attr("x1", 0).attr("x2", width)
+        .attr("y1", height).attr("y2", height)
+        .attr("stroke", "#2a2a2a");
+
+    // Area fill
+    svg.append("path")
+        .datum(scores)
+        .attr("fill", "#00e5a0").attr("fill-opacity", 0.08)
+        .attr("d", d3.area()
+            .x((d, i) => x(i))
+            .y0(height)
+            .y1(d => y(d)));
+
+    // Line
+    svg.append("path")
+        .datum(scores)
+        .attr("fill", "none").attr("stroke", "#00e5a0").attr("stroke-width", 2)
+        .attr("d", d3.line().x((d, i) => x(i)).y(d => y(d)));
+
+    // Average reference line — rendered last so it's on top
+    const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+    svg.append("line")
+        .attr("x1", 0).attr("x2", width)
+        .attr("y1", y(avg)).attr("y2", y(avg))
+        .attr("stroke", "#e5a000").attr("stroke-width", 1)
+        .attr("stroke-dasharray", "4,4").attr("opacity", 0.7);
+
+    // Average label with background rect for readability
+    const avgLabelText = `avg ${avg.toFixed(3)}`;
+    const avgLabel = svg.append("g");
+    const avgTextNode = avgLabel.append("text")
+        .attr("x", width - 4).attr("y", y(avg) - 8)
+        .attr("text-anchor", "end")
+        .attr("fill", "#e5a000").style("font-size", "10px").style("font-family", "'JetBrains Mono', monospace")
+        .text(avgLabelText);
+    // Add background behind the text
+    const bbox = avgTextNode.node().getBBox();
+    avgLabel.insert("rect", "text")
+        .attr("x", bbox.x - 3).attr("y", bbox.y - 1)
+        .attr("width", bbox.width + 6).attr("height", bbox.height + 2)
+        .attr("fill", "var(--bg-panel, #111)").attr("rx", 2).attr("opacity", 0.9);
+
+    // Tooltip overlay for hover
+    const focus = svg.append("g").style("display", "none");
+    focus.append("line").attr("class", "focus-vline")
+        .attr("y1", 0).attr("y2", height)
+        .attr("stroke", "#555").attr("stroke-width", 1).attr("stroke-dasharray", "2,2");
+    focus.append("circle").attr("r", 5).attr("fill", "#00e5a0").attr("stroke", "#111").attr("stroke-width", 2);
+    // Tooltip background + text
+    const tooltipG = focus.append("g").attr("class", "focus-tooltip");
+    tooltipG.append("rect").attr("class", "focus-bg")
+        .attr("rx", 3).attr("fill", "#222").attr("stroke", "#444").attr("stroke-width", 1);
+    tooltipG.append("text").attr("class", "focus-label")
+        .attr("fill", "#e0e0e0").style("font-size", "11px").style("font-family", "'JetBrains Mono', monospace");
+
+    svg.append("rect")
+        .attr("width", width).attr("height", height)
+        .attr("fill", "none").attr("pointer-events", "all")
+        .on("mouseover", () => focus.style("display", null))
+        .on("mouseout", () => focus.style("display", "none"))
+        .on("mousemove", function(event) {
+            const mx = d3.pointer(event, this)[0];
+            const idx = Math.round(x.invert(mx));
+            const ci = Math.max(0, Math.min(scores.length - 1, idx));
+            // Find which chapter this event belongs to
+            let chapterLabel = "";
+            for (let k = chapterBoundaries.length - 1; k >= 0; k--) {
+                if (ci >= chapterBoundaries[k].startIdx) {
+                    chapterLabel = chapterBoundaries[k].label;
+                    break;
+                }
+            }
+            const tipText = `#${ci + 1}: ${(scores[ci] * 100).toFixed(1)}% · ${chapterLabel}`;
+            focus.attr("transform", `translate(${x(ci)},0)`);
+            focus.select("circle").attr("cy", y(scores[ci]));
+            focus.select(".focus-vline").attr("x1", 0).attr("x2", 0);
+            const textEl = focus.select(".focus-label")
+                .attr("x", 10).attr("y", 16)
+                .text(tipText);
+            const tb = textEl.node().getBBox();
+            // Flip tooltip to left side if near right edge
+            const flipX = x(ci) > width - tb.width - 30;
+            textEl.attr("x", flipX ? -tb.width - 10 : 10);
+            focus.select(".focus-bg")
+                .attr("x", flipX ? -tb.width - 16 : 4)
+                .attr("y", tb.y - 4)
+                .attr("width", tb.width + 12).attr("height", tb.height + 8);
+        });
+}
+
+function drawEventRougeLine(container, scores, chapterBoundaries) {
+    if (scores.length === 0) {
+        d3.select(container).append("div").attr("class", "chart-empty").text("No data");
+        return;
+    }
+    // Store draw function for modal re-rendering
+    container._chartDrawFn = (target, modal) => _renderEventRougeLine(target, scores, chapterBoundaries, modal);
+    _renderEventRougeLine(container, scores, chapterBoundaries, false);
+}
+
+
+function _openChartModal(chartContainer, titleText) {
+    // Remove existing modal if any
+    const existing = document.getElementById("chart-modal-overlay");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "chart-modal-overlay";
+    overlay.className = "chart-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "chart-modal";
+
+    const header = document.createElement("div");
+    header.className = "chart-modal-header";
+    header.innerHTML = `<span class="chart-modal-title">${escapeHtml(titleText)}</span>`;
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "chart-modal-close";
+    closeBtn.innerHTML = "✕";
+    closeBtn.addEventListener("click", () => overlay.remove());
+    header.appendChild(closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "chart-modal-body";
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // If the chart has a re-render function, use it for full interactivity
+    if (chartContainer._chartDrawFn) {
+        // Use requestAnimationFrame so body has layout dimensions
+        requestAnimationFrame(() => {
+            chartContainer._chartDrawFn(body, true);
+        });
+    } else {
+        // Fallback: clone SVG with viewBox scaling
+        const originalSvg = chartContainer.querySelector("svg");
+        if (originalSvg) {
+            const clonedSvg = originalSvg.cloneNode(true);
+            clonedSvg.style.width = "100%";
+            clonedSvg.style.height = "auto";
+            clonedSvg.setAttribute("viewBox", `0 0 ${originalSvg.getAttribute("width")} ${originalSvg.getAttribute("height")}`);
+            clonedSvg.removeAttribute("width");
+            clonedSvg.removeAttribute("height");
+            clonedSvg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+            body.appendChild(clonedSvg);
+        }
+    }
+
+    // Close on overlay click
+    overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+
+    // Close on Escape
+    const escHandler = (e) => {
+        if (e.key === "Escape") {
+            overlay.remove();
+            document.removeEventListener("keydown", escHandler);
+        }
+    };
+    document.addEventListener("keydown", escHandler);
+
+    // Animate in
+    requestAnimationFrame(() => overlay.classList.add("active"));
 }
 
 
