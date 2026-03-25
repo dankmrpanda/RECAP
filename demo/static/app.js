@@ -1512,7 +1512,7 @@ function drawBarChart(container, labels, values, opts) {
         return;
     }
 
-    const margin = {top: 20, right: 16, bottom: 56, left: 70};
+    const margin = {top: 20, right: 30, bottom: 56, left: 70};
     const width = container.clientWidth - margin.left - margin.right;
     const height = 230 - margin.top - margin.bottom;
 
@@ -1594,7 +1594,7 @@ function drawLineChart(container, xLabels, datasets, opts) {
         return;
     }
 
-    const margin = {top: 20, right: 16, bottom: 46, left: 70};
+    const margin = {top: 20, right: 30, bottom: 46, left: 70};
     const width = container.clientWidth - margin.left - margin.right;
     const height = 230 - margin.top - margin.bottom;
 
@@ -1739,7 +1739,7 @@ function drawDonutChart(container, entries, colorMap) {
 
 
 function drawHistogram(container, values) {
-    const margin = {top: 20, right: 16, bottom: 40, left: 70};
+    const margin = {top: 20, right: 30, bottom: 40, left: 70};
     const width = container.clientWidth - margin.left - margin.right;
     const height = 200 - margin.top - margin.bottom;
 
