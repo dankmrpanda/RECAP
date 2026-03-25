@@ -931,6 +931,35 @@ body::before {
     padding: 16px;
     text-align: center;
     background: var(--bg-panel);
+    position: relative;
+}
+
+.stat-box[data-tooltip] {
+    cursor: help;
+}
+
+.stat-box[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 400;
+    padding: 5px 9px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+    z-index: 20;
+}
+
+.stat-box[data-tooltip]:hover::after {
+    opacity: 1;
 }
 
 .stat-value {
@@ -1014,6 +1043,35 @@ body::before {
     padding: 3px 8px;
     border-radius: var(--radius);
     letter-spacing: 0.5px;
+    position: relative;
+}
+
+.event-score[data-tooltip] {
+    cursor: help;
+}
+
+.event-score[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+    padding: 5px 9px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+    z-index: 20;
+}
+
+.event-score[data-tooltip]:hover::after {
+    opacity: 1;
 }
 
 .score-high {
@@ -1150,12 +1208,408 @@ body::before {
     border-color: var(--accent-border);
 }
 
+/* ── Advanced Parameters & Charts ───────────── */
+
+.collapsible-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.collapsible-header:hover {
+    opacity: 0.85;
+}
+
+.toggle-arrow {
+    display: inline-block;
+    width: 1.2em;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+}
+
+.setting-group input[type="number"] {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    transition: border-color var(--transition);
+    outline: none;
+    width: 100%;
+}
+
+.setting-group input[type="number"]:focus {
+    border-color: var(--accent-border);
+}
+
+/* Charts */
+.charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.chart-container {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+}
+
+.chart-container svg {
+    width: 100%;
+    display: block;
+    overflow: visible;
+}
+
+.chart-title {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.all-chapter-heading {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 18px 0 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
+}
+
+.all-chapter-heading:first-child {
+    padding-top: 0;
+}
+
+.chart-empty {
+    color: var(--text-faint);
+    font-size: 13px;
+    text-align: center;
+    padding: 40px 0;
+}
+
+/* ── P1: Pipeline Step Tabs ────────────────── */
+
+.step-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.step-tab {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.step-tab:hover {
+    border-color: var(--border-focus);
+    color: var(--text);
+}
+
+.step-tab.active {
+    border-color: var(--accent-border);
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.step-tab-label {
+    letter-spacing: 0.5px;
+}
+
+.step-tab-score {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 2px;
+}
+
+.step-content {
+    display: none;
+}
+
+.step-content.active {
+    display: block;
+}
+
+.step-score-inline {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 2px;
+    margin-left: 6px;
+}
+
+.feedback-block {
+    background: var(--bg);
+    border: 1px solid rgba(229, 160, 0, 0.2);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    margin-bottom: 10px;
+}
+
+.feedback-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--warning);
+    margin-bottom: 6px;
+}
+
+.feedback-text {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+}
+
+/* ── P2: Sparkline ─────────────────────────── */
+
+.event-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.sparkline-wrap {
+    display: inline-flex;
+    align-items: center;
+    position: relative;
+    cursor: help;
+}
+
+.sparkline-wrap svg {
+    display: block;
+}
+
+.sparkline-wrap[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+    padding: 5px 9px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+    z-index: 20;
+}
+
+.sparkline-wrap[data-tooltip]:hover::after {
+    opacity: 1;
+}
+
+/* ── P3: Method Breakdown ──────────────────── */
+
+.method-breakdown {
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.method-breakdown-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+}
+
+.method-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.method-table th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-faint);
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.method-table td {
+    padding: 8px 12px;
+    color: var(--text-dim);
+    border-bottom: 1px solid rgba(42, 42, 42, 0.5);
+}
+
+.method-table tr:last-child td {
+    border-bottom: none;
+}
+
+.method-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.jailbreak-stat {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.jailbreak-stat strong {
+    color: var(--accent);
+}
+
+/* ── P4: Passage Heatmap ───────────────────── */
+
+.passage-heatmap {
+    margin-bottom: 12px;
+    position: relative;
+    cursor: help;
+}
+
+.passage-heatmap[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+    z-index: 20;
+}
+
+.passage-heatmap[data-tooltip]:hover::after {
+    opacity: 1;
+}
+
+.heatmap-bar {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--border);
+}
+
+.heatmap-seg {
+    display: block;
+    height: 100%;
+    min-width: 1px;
+}
+
+/* ── P5: Compare Page ──────────────────────── */
+
+.compare-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.compare-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.compare-item:hover {
+    border-color: var(--border-focus);
+}
+
+.compare-item input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 16px;
+    height: 16px;
+}
+
+.compare-item-name {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.compare-item-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+.compare-empty {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
+.compare-empty a {
+    color: var(--accent);
+}
+
+.compare-loading {
+    text-align: center;
+    padding: 24px;
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
 /* ── Responsive ─────────────────────────────── */
 
 @media (max-width: 640px) {
     .settings-grid,
     .keys-grid,
-    .comparison-grid {
+    .comparison-grid,
+    .charts-grid {
         grid-template-columns: 1fr;
     }
 

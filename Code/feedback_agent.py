@@ -1,4 +1,5 @@
 from custom_utils import extract_json_content
+from extraction_utils import _detect_midgen_cutoff, _strip_trailing_refusal
 from openai import APIError
 from tqdm import tqdm
 import sys
@@ -16,6 +17,7 @@ def feedback_loop(feedback_client,
                   jailbreaking,
                   structured,
                   skip_threshold=0.95,
+                  max_iterations=5,
                   progress_callback=None):
     
 
@@ -84,7 +86,6 @@ def feedback_loop(feedback_client,
             {"role": "assistant", "content": completion_text}]
     
 
-    max_iterations = 5
     for iteration in tqdm(range(1, max_iterations + 1), desc="Refinements", leave=False):
         try:
             # 1) Guidance
@@ -216,6 +217,13 @@ def feedback_loop(feedback_client,
                       file=sys.stderr, flush=True)
                 if finish_reason == "length":
                     print(f"[Feedback] Iter {iteration}: WARNING: Output truncated due to max_completion_tokens!",
+                          file=sys.stderr, flush=True)
+
+                # Mid-generation copyright cutoff detection
+                if _detect_midgen_cutoff(refined_text, refined_words, original_words, finish_reason):
+                    refined_text = _strip_trailing_refusal(refined_text)
+                    refined_words = len(refined_text.split())
+                    print(f"[Feedback] Iter {iteration}: Stripped trailing refusal: {refined_words} words",
                           file=sys.stderr, flush=True)
 
 

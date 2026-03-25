@@ -207,6 +207,12 @@ def results_browser():
     return render_template("browse.html")
 
 
+@app.route("/compare")
+def compare_page():
+    """Render the multi-run comparison page."""
+    return render_template("compare.html")
+
+
 @app.route("/tasks")
 def tasks_page():
     """Render the tasks page."""
@@ -322,6 +328,12 @@ def upload():
     evaluation_model = request.form.get("evaluation_model", fallback)
     preprocessing_model = request.form.get("preprocessing_model", fallback)
 
+    # Advanced parameters
+    max_feedback_iterations = int(request.form.get("max_feedback_iterations", 5))
+    feedback_skip_threshold = float(request.form.get("feedback_skip_threshold", 0.95))
+    min_tokens = int(request.form.get("min_tokens", 40))
+    max_mismatch_tokens = int(request.form.get("max_mismatch_tokens", 5))
+
     api_keys = {}
     for key_name in ["openai", "gemini", "anthropic", "deepseek"]:
         # Prefer form value, fall back to env var
@@ -355,6 +367,10 @@ def upload():
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "api_provider_keys": [k for k in api_keys if api_keys[k]],
+        "max_feedback_iterations": max_feedback_iterations,
+        "feedback_skip_threshold": feedback_skip_threshold,
+        "min_tokens": min_tokens,
+        "max_mismatch_tokens": max_mismatch_tokens,
     }
     _persist_task(task_id)
 
@@ -368,6 +384,10 @@ def upload():
         target=_run_pipeline,
         args=(task_id, str(filepath), target_model, feedback_model,
               evaluation_model, preprocessing_model, api_keys),
+        kwargs={
+            "max_feedback_iterations": max_feedback_iterations,
+            "feedback_skip_threshold": feedback_skip_threshold,
+        },
         daemon=True,
     )
     thread.start()
@@ -381,6 +401,12 @@ def progress_page(task_id):
     task = tasks.get(task_id)
     if not task:
         return redirect(url_for("index"))
+    # If task is already complete and has results, load as saved result
+    # so we don't try to connect to a dead SSE stream
+    if task.get("status") == "complete" and task.get("result_path") and os.path.exists(task["result_path"]):
+        result_rel = os.path.relpath(task["result_path"], app.config["RESULTS_FOLDER"]).replace("\\", "/")
+        return render_template("results.html", task_id=None, task=task,
+                               saved_result_path=result_rel)
     return render_template("results.html", task_id=task_id, task=task)
 
 
@@ -580,6 +606,8 @@ def api_restart(task_id):
         kwargs={
             "resume_preprocessed_path": resume_preprocessed_path,
             "resume_result_path": resume_result_path,
+            "max_feedback_iterations": task.get("max_feedback_iterations", 5),
+            "feedback_skip_threshold": task.get("feedback_skip_threshold", 0.95),
         },
         daemon=True,
     )
@@ -704,7 +732,8 @@ def _save_pipeline_log(result_path: str, logs: list):
 
 def _run_pipeline(task_id, filepath, target_model, feedback_model,
                   evaluation_model, preprocessing_model, api_keys,
-                  resume_preprocessed_path=None, resume_result_path=None):
+                  resume_preprocessed_path=None, resume_result_path=None,
+                  max_feedback_iterations=5, feedback_skip_threshold=0.95):
     """Run the full pipeline in a background thread."""
     q = task_logs[task_id]
     task = tasks[task_id]
@@ -826,6 +855,8 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
                 anthropic_keys=anthropic_keys,
                 deepseek_keys=deepseek_keys,
                 output_path_override=resume_result_path,
+                max_feedback_iterations=max_feedback_iterations,
+                feedback_skip_threshold=feedback_skip_threshold,
             )
             tlog("Extraction task ready.")
 

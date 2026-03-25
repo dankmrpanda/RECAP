@@ -21,6 +21,7 @@
                 <a href="/" class="nav-link active">Extract</a>
                 <a href="/tasks" class="nav-link">Tasks</a>
                 <a href="/results" class="nav-link">Results</a>
+                <a href="/compare" class="nav-link">Compare</a>
             </nav>
         </div>
     </header>
@@ -228,6 +229,40 @@
                                 <option value="deepseek-chat" {{ 'selected' if default_model == 'deepseek-chat' }}>DeepSeek V3.2 (Chat)</option>
                             </optgroup>
                         </select>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Advanced Parameters Section -->
+            <section class="card params-card">
+                <div class="card-header collapsible-header" onclick="document.getElementById('params-body').classList.toggle('hidden'); this.querySelector('.toggle-arrow').textContent = document.getElementById('params-body').classList.contains('hidden') ? '>' : 'v';">
+                    <div>
+                        <h2><span class="toggle-arrow">></span> Advanced Parameters</h2>
+                        <p class="card-desc">pipeline tuning -- defaults match the paper</p>
+                    </div>
+                </div>
+                <div id="params-body" class="hidden">
+                    <div class="settings-grid">
+                        <div class="setting-group">
+                            <label for="max_feedback_iterations">Max Feedback Iterations</label>
+                            <p class="setting-hint">Refinement rounds per event (paper: 5)</p>
+                            <input type="number" id="max_feedback_iterations" name="max_feedback_iterations" value="5" min="0" max="20">
+                        </div>
+                        <div class="setting-group">
+                            <label for="feedback_skip_threshold">Skip Threshold</label>
+                            <p class="setting-hint">Skip feedback if ROUGE-L exceeds this (paper: 0.95)</p>
+                            <input type="number" id="feedback_skip_threshold" name="feedback_skip_threshold" value="0.95" min="0" max="1" step="0.01">
+                        </div>
+                        <div class="setting-group">
+                            <label for="min_tokens">Min Passage Tokens</label>
+                            <p class="setting-hint">Minimum tokens for a memorized passage (paper: 40)</p>
+                            <input type="number" id="min_tokens" name="min_tokens" value="40" min="1" max="200">
+                        </div>
+                        <div class="setting-group">
+                            <label for="max_mismatch_tokens">Max Mismatch Tokens</label>
+                            <p class="setting-hint">Allowed mismatches when merging spans (paper: 5)</p>
+                            <input type="number" id="max_mismatch_tokens" name="max_mismatch_tokens" value="5" min="0" max="50">
+                        </div>
                     </div>
                 </div>
             </section>

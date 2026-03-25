@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RECAP — Compare Runs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="header-inner">
+            <a href="/" class="logo">
+                <span class="logo-text">RECAP</span>
+                <span class="logo-badge">v2.1</span>
+            </a>
+            <nav class="nav">
+                <a href="/" class="nav-link">Extract</a>
+                <a href="/tasks" class="nav-link">Tasks</a>
+                <a href="/results" class="nav-link">Results</a>
+                <a href="/compare" class="nav-link active">Compare</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main results-main">
+        <div class="card">
+            <div class="card-header">
+                <h2>Select Results to Compare</h2>
+                <p class="card-desc">Choose 2 or more saved extraction results to compare side-by-side.</p>
+            </div>
+            <div id="compare-select-area">
+                <div class="compare-loading">Loading saved results...</div>
+            </div>
+            <div style="margin-top:12px;text-align:center;">
+                <button id="compare-btn" class="submit-btn" disabled>Compare Selected</button>
+            </div>
+        </div>
+
+        <section id="compare-results" class="hidden">
+            <div class="card">
+                <div class="card-header"><h2>Summary Comparison</h2></div>
+                <div id="compare-summary-table"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header"><h2>ROUGE-L by Chapter</h2></div>
+                <div id="compare-chapter-chart"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header"><h2>Method Comparison</h2></div>
+                <div id="compare-method-chart"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>RECAP — <a href="https://arxiv.org/abs/2510.25941" target="_blank">Paper</a> ·
+        <a href="https://github.com/avduarte333/RECAP" target="_blank">GitHub</a></p>
+    </footer>
+
+    <script>
+        const COMPARE_COLORS = ["#00e5a0", "#5bc0de", "#e5a000", "#e55050", "#a78bfa", "#f472b6", "#34d399", "#fbbf24", "#60a5fa", "#f87171"];
+        // Stub globals that app.js expects (not used on compare page)
+        const TASK_ID = null;
+        const SAVED_RESULT_PATH = null;
+    </script>
+    <script src="/static/app.js"></script>
+    <script src="/static/compare.js"></script>
+</body>
+</html>
