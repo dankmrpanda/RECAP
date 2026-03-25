@@ -51,7 +51,7 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB upload limit
 app.config["UPLOAD_FOLDER"] = Path(__file__).resolve().parent / "uploads"
 app.config["RESULTS_FOLDER"] = Path(__file__).resolve().parent / "results"
 
-ALLOWED_EXTENSIONS = {"txt", "epub", "pdf"}
+ALLOWED_EXTENSIONS = {"txt", "epub", "pdf", "json"}
 
 # In-memory task store
 tasks = {}   # task_id -> task info dict
@@ -295,9 +295,14 @@ def api_validate_keys():
 def upload():
     """Handle book upload and start the extraction pipeline."""
     existing_file = request.form.get("existing_file", "").strip()
+    upload_folder = request.form.get("upload_folder", "").strip()
+    # Sanitize folder: no leading/trailing slashes, no ..
+    upload_folder = upload_folder.strip("/\\").replace("\\", "/")
+    if ".." in upload_folder:
+        return jsonify({"error": "Invalid folder path"}), 400
 
     if existing_file:
-        # Use a previously uploaded book
+        # Use a previously uploaded book (existing_file is relative to uploads dir)
         app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
         filepath = (app.config["UPLOAD_FOLDER"] / existing_file).resolve()
         # Prevent path traversal
@@ -306,19 +311,28 @@ def upload():
         if not filepath.exists():
             return jsonify({"error": "Selected file no longer exists"}), 404
         filename = filepath.name
+        # Derive folder from existing file's relative path
+        rel = Path(existing_file)
+        upload_folder = str(rel.parent).replace("\\", "/") if rel.parent != Path(".") else ""
     else:
         if "file" not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files["file"]
         if file.filename == "" or not allowed_file(file.filename):
-            return jsonify({"error": "Invalid file. Please upload a .txt, .epub, or .pdf file."}), 400
+            return jsonify({"error": "Invalid file. Please upload a .txt, .epub, .pdf, or .json (EchoTrace summary) file."}), 400
 
-        # Save uploaded file
-        app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
+        # Save uploaded file into the specified folder
+        target_dir = app.config["UPLOAD_FOLDER"]
+        if upload_folder:
+            target_dir = target_dir / upload_folder
+        target_dir.mkdir(parents=True, exist_ok=True)
         filename = secure_filename(file.filename)
-        filepath = app.config["UPLOAD_FOLDER"] / filename
+        filepath = target_dir / filename
         file.save(str(filepath))
+
+    # Detect if the uploaded file is a pre-processed EchoTrace summary JSON
+    is_summary_json = Path(filename).suffix.lower() == ".json"
 
     # Get settings from form (defaults come from env-configured provider)
     default_provider = _get_default_provider()
@@ -356,13 +370,14 @@ def upload():
         "status": "starting",
         "filename": filename,
         "filepath": str(filepath),
+        "upload_folder": upload_folder,
         "target_model": target_model,
         "feedback_model": feedback_model,
         "evaluation_model": evaluation_model,
         "preprocessing_model": preprocessing_model,
         "progress": 0,
         "result_path": None,
-        "preprocessed_path": None,
+        "preprocessed_path": str(filepath) if is_summary_json else None,
         "error": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -387,6 +402,8 @@ def upload():
         kwargs={
             "max_feedback_iterations": max_feedback_iterations,
             "feedback_skip_threshold": feedback_skip_threshold,
+            "resume_preprocessed_path": str(filepath) if is_summary_json else None,
+            "upload_folder": upload_folder,
         },
         daemon=True,
     )
@@ -401,12 +418,20 @@ def progress_page(task_id):
     task = tasks.get(task_id)
     if not task:
         return redirect(url_for("index"))
-    # If task is already complete and has results, load as saved result
-    # so we don't try to connect to a dead SSE stream
-    if task.get("status") == "complete" and task.get("result_path") and os.path.exists(task["result_path"]):
-        result_rel = os.path.relpath(task["result_path"], app.config["RESULTS_FOLDER"]).replace("\\", "/")
-        return render_template("results.html", task_id=None, task=task,
-                               saved_result_path=result_rel)
+    status = task.get("status", "")
+    result_exists = bool(task.get("result_path") and os.path.exists(task["result_path"]))
+
+    # For any non-running state, avoid connecting to a (potentially dead) SSE stream
+    if status not in ("starting", "preprocessing", "extracting", "paused"):
+        if result_exists:
+            # Show whatever results exist (complete or partial)
+            result_rel = os.path.relpath(task["result_path"], app.config["RESULTS_FOLDER"]).replace("\\", "/")
+            return render_template("results.html", task_id=None, task=task,
+                                   saved_result_path=result_rel)
+        # No results yet — send back to main page which shows the resumable-tasks panel
+        return redirect(url_for("index"))
+
+    # Task is actively running — connect to live SSE stream
     return render_template("results.html", task_id=task_id, task=task)
 
 
@@ -608,6 +633,7 @@ def api_restart(task_id):
             "resume_result_path": resume_result_path,
             "max_feedback_iterations": task.get("max_feedback_iterations", 5),
             "feedback_skip_threshold": task.get("feedback_skip_threshold", 0.95),
+            "upload_folder": task.get("upload_folder", ""),
         },
         daemon=True,
     )
@@ -633,19 +659,66 @@ def api_delete_task(task_id):
 
 @app.route("/api/uploaded-books")
 def api_uploaded_books():
-    """List all previously uploaded book files."""
+    """List uploaded book files. Use ?folder=path to list only direct children of that folder."""
     uploads_dir = app.config["UPLOAD_FOLDER"]
     uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    folder = request.args.get("folder", "").strip().strip("/\\").replace("\\", "/")
+    if ".." in folder:
+        return jsonify({"error": "Invalid path"}), 400
+
+    target_dir = uploads_dir / folder if folder else uploads_dir
+
+    # Prevent path traversal
+    if not str(target_dir.resolve()).startswith(str(uploads_dir.resolve())):
+        return jsonify({"error": "Invalid path"}), 403
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        return jsonify([])
+
     books = []
-    for f in sorted(uploads_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if f.is_file() and f.suffix.lower() in {".txt", ".epub", ".pdf"}:
+    for f in sorted(target_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if f.is_file() and f.suffix.lower() in {".txt", ".epub", ".pdf", ".json"}:
+            rel = f.relative_to(uploads_dir)
             books.append({
                 "name": f.stem.replace("_", " ").replace("-", " "),
-                "filename": f.name,
+                "filename": str(rel).replace("\\", "/"),
+                "folder": folder,
                 "size": f.stat().st_size,
                 "modified": f.stat().st_mtime,
+                "type": "summary" if f.suffix.lower() == ".json" else "book",
             })
     return jsonify(books)
+
+
+@app.route("/api/upload-folders")
+def api_upload_folders():
+    """List all folders in the uploads directory as a flat list and a tree.
+
+    Query param ?parent=some/path returns immediate children of that path.
+    No param returns all folders flat.
+    """
+    uploads_dir = app.config["UPLOAD_FOLDER"]
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    parent = request.args.get("parent", "").strip().strip("/\\").replace("\\", "/")
+    if ".." in parent:
+        return jsonify({"error": "Invalid path"}), 400
+
+    target = uploads_dir / parent if parent else uploads_dir
+    if not target.exists() or not target.is_dir():
+        return jsonify([])
+
+    # Prevent path traversal
+    if not str(target.resolve()).startswith(str(uploads_dir.resolve())):
+        return jsonify({"error": "Invalid path"}), 403
+
+    children = []
+    for d in sorted(target.iterdir()):
+        if d.is_dir():
+            rel = str(d.relative_to(uploads_dir)).replace("\\", "/")
+            children.append(rel)
+    return jsonify(children)
 
 
 @app.route("/api/saved-results")
@@ -656,9 +729,27 @@ def api_saved_results():
     files = []
     for f in sorted(results_dir.glob("**/*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         rel = f.relative_to(results_dir)
+        rel_str = str(rel).replace("\\", "/")
+        # Determine the top-level folder (user-created folder, not the timestamp folder)
+        parts = rel_str.split("/")
+        # Check if first part is a user folder (not a BookName_timestamp pattern)
+        folder = ""
+        if len(parts) > 1:
+            # Walk from the top to find user-created folders vs book_timestamp folders
+            # User folders don't contain the timestamp pattern _YYYYMMDD_HHMMSS
+            import re
+            accumulated = []
+            for p in parts[:-1]:
+                if re.match(r'.*_\d{8}_\d{6}$', p):
+                    break
+                if p == "Extractions":
+                    break
+                accumulated.append(p)
+            folder = "/".join(accumulated) if accumulated else ""
         files.append({
             "name": f.stem,
-            "path": str(rel).replace("\\", "/"),
+            "path": rel_str,
+            "folder": folder,
             "size": f.stat().st_size,
             "modified": f.stat().st_mtime,
         })
@@ -718,6 +809,55 @@ def _check_controls(task_id, log_fn):
         raise PipelineCancelled()
 
 
+def _save_summary_files(result_path: str, preprocessed_path: str):
+    """Copy the EchoTrace summary JSON and generate a plain-text version into the book results folder.
+
+    The JSON can be re-imported via the UI to skip preprocessing on the next run.
+    The TXT contains every text_segment in readable form, structured by chapter and event.
+    """
+    try:
+        pp = Path(preprocessed_path)
+        if not pp.exists():
+            return
+
+        # Book results dir = Results/BookName_timestamp/  (parent of Extractions/)
+        book_dir = Path(result_path).parent.parent
+
+        with open(str(pp), "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        book_name = data.get("book_name", pp.stem)
+
+        # 1. Copy summary JSON (importable EchoTrace format)
+        summary_json_path = book_dir / f"{book_name}_summary.json"
+        with open(str(summary_json_path), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        # 2. Generate plain-text version (human-readable + can be re-uploaded as a .txt book)
+        lines = [book_name.replace("_", " "), "=" * 60, ""]
+        for ch in data.get("chapters", []):
+            ch_title = ch.get("chapter_title", "")
+            lines.append(ch_title)
+            lines.append("-" * len(ch_title))
+            lines.append("")
+            for ev in ch.get("events", []):
+                ev_title = ev.get("title", "")
+                if ev_title:
+                    lines.append(f"[{ev_title}]")
+                text = ev.get("text_segment", "").strip()
+                if text:
+                    lines.append(text)
+                lines.append("")
+            lines.append("")
+
+        txt_path = book_dir / f"{book_name}_summary.txt"
+        with open(str(txt_path), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+    except Exception:
+        pass  # Non-critical — don't break the pipeline for summary export
+
+
 def _save_pipeline_log(result_path: str, logs: list):
     """Append the pipeline log to the result JSON file."""
     try:
@@ -733,7 +873,8 @@ def _save_pipeline_log(result_path: str, logs: list):
 def _run_pipeline(task_id, filepath, target_model, feedback_model,
                   evaluation_model, preprocessing_model, api_keys,
                   resume_preprocessed_path=None, resume_result_path=None,
-                  max_feedback_iterations=5, feedback_skip_threshold=0.95):
+                  max_feedback_iterations=5, feedback_skip_threshold=0.95,
+                  upload_folder=""):
     """Run the full pipeline in a background thread."""
     q = task_logs[task_id]
     task = tasks[task_id]
@@ -843,13 +984,19 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
             _check_controls(task_id, log)
             tlog("Initializing extraction task...")
 
+            # Mirror upload folder structure in results
+            results_folder = app.config["RESULTS_FOLDER"]
+            if upload_folder:
+                results_folder = results_folder / upload_folder
+                results_folder.mkdir(parents=True, exist_ok=True)
+
             extraction_task = BookExtractionTask(
                 json_file_path=str(preprocessed_path),
                 model_name=target_model,
                 evaluation_model_name=evaluation_model,
                 jailbreaker_model_name=evaluation_model,
                 feedback_model_name=feedback_model,
-                results_base_folder=str(app.config["RESULTS_FOLDER"]),
+                results_base_folder=str(results_folder),
                 gemini_keys=gemini_keys,
                 openai_keys=openai_keys,
                 anthropic_keys=anthropic_keys,
@@ -905,6 +1052,11 @@ def _run_pipeline(task_id, filepath, target_model, feedback_model,
 
             # Save pipeline log into the result JSON so it persists for the results tab
             _save_pipeline_log(result_path, collected_logs)
+
+            # Copy summary JSON + generate plain-text version into the results folder
+            if task.get("preprocessed_path"):
+                _save_summary_files(result_path, task["preprocessed_path"])
+                log("Summary JSON and TXT saved to results folder.")
 
             q.put({"type": "complete", "message": "Pipeline complete!", "result_path": result_path})
 

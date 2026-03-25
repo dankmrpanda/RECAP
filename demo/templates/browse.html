@@ -62,25 +62,50 @@
                     return;
                 }
 
+                // Group by folder
+                const folderMap = {};
                 files.forEach(f => {
-                    const item = document.createElement("a");
-                    item.href = `/view/${encodeURIComponent(f.path)}`;
-                    item.className = "saved-result-item";
+                    const folder = f.folder || "(root)";
+                    if (!folderMap[folder]) folderMap[folder] = [];
+                    folderMap[folder].push(f);
+                });
 
-                    const date = new Date(f.modified * 1000);
-                    const dateStr = date.toLocaleDateString() + " " +
-                        date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+                const folderNames = Object.keys(folderMap).sort((a, b) => {
+                    if (a === "(root)") return -1;
+                    if (b === "(root)") return 1;
+                    return a.localeCompare(b);
+                });
 
-                    const sizeStr = formatBytes(f.size);
+                const hasFolders = folderNames.length > 1 || folderNames[0] !== "(root)";
 
-                    item.innerHTML = `
-                        <div class="saved-result-info">
-                            <span class="saved-result-name">${escapeHtml(f.name)}</span>
-                            <span class="saved-result-meta">${sizeStr} &middot; ${dateStr}</span>
-                        </div>
-                        <span class="saved-result-arrow">&rarr;</span>
-                    `;
-                    list.appendChild(item);
+                folderNames.forEach(folder => {
+                    if (hasFolders) {
+                        const header = document.createElement("div");
+                        header.className = "folder-group-header";
+                        header.innerHTML = `<span class="folder-icon">/</span> ${escapeHtml(folder === "(root)" ? "(root)" : folder)}`;
+                        list.appendChild(header);
+                    }
+
+                    folderMap[folder].forEach(f => {
+                        const item = document.createElement("a");
+                        item.href = `/view/${encodeURIComponent(f.path)}`;
+                        item.className = "saved-result-item" + (hasFolders ? " in-folder" : "");
+
+                        const date = new Date(f.modified * 1000);
+                        const dateStr = date.toLocaleDateString() + " " +
+                            date.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+
+                        const sizeStr = formatBytes(f.size);
+
+                        item.innerHTML = `
+                            <div class="saved-result-info">
+                                <span class="saved-result-name">${escapeHtml(f.name)}</span>
+                                <span class="saved-result-meta">${sizeStr} &middot; ${dateStr}</span>
+                            </div>
+                            <span class="saved-result-arrow">&rarr;</span>
+                        `;
+                        list.appendChild(item);
+                    });
                 });
             } catch (err) {
                 list.innerHTML = '<p class="browse-loading">Failed to load results.</p>';

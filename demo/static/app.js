@@ -82,6 +82,110 @@ function initUploadPage() {
 
     let sourceMode = "upload"; // "upload" or "existing"
     let existingBooksLoaded = false;
+    const folderHiddenInput = document.getElementById("upload-folder-input");
+    const folderBreadcrumb = document.getElementById("folder-breadcrumb");
+    const folderChildren = document.getElementById("folder-children");
+    const folderNewName = document.getElementById("folder-new-name");
+    const folderNewBtn = document.getElementById("folder-new-btn");
+
+    // Current folder path segments: ["level1", "level2", ...]
+    let folderPath = [];
+
+    function getFolderString() {
+        return folderPath.join("/");
+    }
+
+    function updateFolderHidden() {
+        folderHiddenInput.value = getFolderString();
+    }
+
+    function renderBreadcrumb() {
+        folderBreadcrumb.innerHTML = "";
+        // Root crumb
+        const rootCrumb = document.createElement("span");
+        rootCrumb.className = "folder-crumb folder-crumb--root" + (folderPath.length === 0 ? " active" : "");
+        rootCrumb.textContent = "/";
+        rootCrumb.dataset.level = "0";
+        rootCrumb.addEventListener("click", () => navigateToLevel(0));
+        folderBreadcrumb.appendChild(rootCrumb);
+
+        folderPath.forEach((seg, i) => {
+            const sep = document.createElement("span");
+            sep.className = "folder-crumb-sep";
+            sep.textContent = "/";
+            folderBreadcrumb.appendChild(sep);
+
+            const crumb = document.createElement("span");
+            crumb.className = "folder-crumb" + (i === folderPath.length - 1 ? " active" : "");
+            crumb.textContent = seg;
+            crumb.dataset.level = String(i + 1);
+            crumb.addEventListener("click", () => navigateToLevel(i + 1));
+            folderBreadcrumb.appendChild(crumb);
+        });
+
+        updateFolderHidden();
+    }
+
+    async function loadChildren(parentPath) {
+        folderChildren.innerHTML = "";
+        try {
+            const url = parentPath
+                ? `/api/upload-folders?parent=${encodeURIComponent(parentPath)}`
+                : "/api/upload-folders";
+            const resp = await fetch(url);
+            const children = await resp.json();
+            if (children.length === 0) {
+                folderChildren.innerHTML = '<span class="folder-no-children">no subfolders</span>';
+                return;
+            }
+            children.forEach(fullPath => {
+                // Show only the last segment as the label
+                const parts = fullPath.split("/");
+                const label = parts[parts.length - 1];
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "folder-child-btn";
+                btn.textContent = label;
+                btn.addEventListener("click", () => {
+                    folderPath = fullPath.split("/");
+                    renderBreadcrumb();
+                    loadChildren(fullPath);
+                    refreshExistingBooks();
+                });
+                folderChildren.appendChild(btn);
+            });
+        } catch (err) {
+            folderChildren.innerHTML = '<span class="folder-no-children">failed to load</span>';
+        }
+    }
+
+    function navigateToLevel(level) {
+        // Truncate path to this level
+        folderPath = folderPath.slice(0, level);
+        renderBreadcrumb();
+        loadChildren(getFolderString());
+        refreshExistingBooks();
+    }
+
+    // Create new subfolder
+    folderNewBtn.addEventListener("click", () => createSubfolder());
+    folderNewName.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); createSubfolder(); }
+    });
+
+    function createSubfolder() {
+        const name = folderNewName.value.trim().replace(/[\/\\]/g, "").replace(/\.\./g, "");
+        if (!name) return;
+        folderPath.push(name);
+        renderBreadcrumb();
+        loadChildren(getFolderString());
+        refreshExistingBooks();
+        folderNewName.value = "";
+    }
+
+    // Initialize
+    renderBreadcrumb();
+    loadChildren("");
 
     // "Set All" model selector
     const setAllSelect = document.getElementById("set_all_model");
@@ -108,6 +212,11 @@ function initUploadPage() {
         toggleExisting.classList.remove("active");
         uploadNewSection.classList.remove("hidden");
         existingSection.classList.add("hidden");
+        // Reset JSON-mode UI when switching back to upload
+        const jsonNotice = document.getElementById("json-mode-notice");
+        const prepGroup = document.getElementById("preprocessor-group");
+        if (jsonNotice) jsonNotice.classList.add("hidden");
+        if (prepGroup) prepGroup.classList.remove("setting-group--disabled");
         // Update submit button state based on file selection
         submitBtn.disabled = !selectedFile;
     });
@@ -118,19 +227,25 @@ function initUploadPage() {
         toggleUpload.classList.remove("active");
         existingSection.classList.remove("hidden");
         uploadNewSection.classList.add("hidden");
-        if (!existingBooksLoaded) loadExistingBooks();
+        loadExistingBooks();
         submitBtn.disabled = !existingSelect.value;
     });
 
     existingSelect.addEventListener("change", () => {
         if (sourceMode === "existing") {
             submitBtn.disabled = !existingSelect.value;
+            const isJson = existingSelect.value.toLowerCase().endsWith(".json");
+            const jsonNotice = document.getElementById("json-mode-notice");
+            const prepGroup = document.getElementById("preprocessor-group");
+            if (jsonNotice) jsonNotice.classList.toggle("hidden", !isJson);
+            if (prepGroup) prepGroup.classList.toggle("setting-group--disabled", isJson);
         }
     });
 
     async function loadExistingBooks() {
+        const folder = getFolderString();
         try {
-            const resp = await fetch("/api/uploaded-books");
+            const resp = await fetch(`/api/uploaded-books?folder=${encodeURIComponent(folder)}`);
             const books = await resp.json();
             existingBooksLoaded = true;
             existingSelect.innerHTML = "";
@@ -141,14 +256,36 @@ function initUploadPage() {
             }
             noBooksMsg.classList.add("hidden");
             existingSelect.classList.remove("hidden");
-            existingSelect.appendChild(new Option("-- Select a book --", ""));
-            for (const book of books) {
-                const sizeStr = formatBytes(book.size);
-                existingSelect.appendChild(new Option(`${book.name} (${sizeStr})`, book.filename));
+            existingSelect.appendChild(new Option("-- Select a file --", ""));
+
+            const rawBooks = books.filter(b => b.type !== "summary");
+            const summaries = books.filter(b => b.type === "summary");
+            if (rawBooks.length > 0) {
+                const grp = document.createElement("optgroup");
+                grp.label = "Books (TXT · EPUB · PDF)";
+                for (const book of rawBooks) {
+                    grp.appendChild(new Option(`${truncateFilename(book.filename)}  (${formatBytes(book.size)})`, book.filename));
+                }
+                existingSelect.appendChild(grp);
+            }
+            if (summaries.length > 0) {
+                const grp = document.createElement("optgroup");
+                grp.label = "Pre-processed Summaries (JSON)";
+                for (const book of summaries) {
+                    grp.appendChild(new Option(`${truncateFilename(book.filename)}  (${formatBytes(book.size)})`, book.filename));
+                }
+                existingSelect.appendChild(grp);
             }
         } catch (err) {
             existingSelect.innerHTML = "";
             existingSelect.appendChild(new Option("Failed to load books", ""));
+        }
+    }
+
+    function refreshExistingBooks() {
+        if (sourceMode === "existing") {
+            loadExistingBooks();
+            submitBtn.disabled = true;
         }
     }
 
@@ -182,10 +319,16 @@ function initUploadPage() {
 
     function handleFile(file) {
         const ext = file.name.split(".").pop().toLowerCase();
-        if (!["txt", "epub", "pdf"].includes(ext)) {
-            showError("Unsupported file format. Please use .txt, .epub, or .pdf");
+        if (!["txt", "epub", "pdf", "json"].includes(ext)) {
+            showError("Unsupported file format. Please use .txt, .epub, .pdf, or .json");
             return;
         }
+
+        const isJson = ext === "json";
+        const jsonNotice = document.getElementById("json-mode-notice");
+        const prepGroup = document.getElementById("preprocessor-group");
+        if (jsonNotice) jsonNotice.classList.toggle("hidden", !isJson);
+        if (prepGroup) prepGroup.classList.toggle("setting-group--disabled", isJson);
 
         selectedFile = file;
         fileName.textContent = file.name;
@@ -203,6 +346,10 @@ function initUploadPage() {
         dropContent.classList.remove("hidden");
         filePreview.classList.add("hidden");
         submitBtn.disabled = true;
+        const jsonNotice = document.getElementById("json-mode-notice");
+        const prepGroup = document.getElementById("preprocessor-group");
+        if (jsonNotice) jsonNotice.classList.add("hidden");
+        if (prepGroup) prepGroup.classList.remove("setting-group--disabled");
     });
 
     // Form submission
@@ -590,20 +737,61 @@ function initResultsPage() {
         }
     };
 
+    let _sse_error_handling = false;
     evtSource.onerror = () => {
-        // Check if task is already complete
+        if (_sse_error_handling) return;
+        _sse_error_handling = true;
+
         fetch(`/api/task/${TASK_ID}`)
             .then(r => r.json())
             .then(task => {
-                if (task.status === "complete") {
+                const s = task.status;
+                if (s === "complete") {
+                    evtSource.close();
                     statusIcon.textContent = "✅";
                     statusIcon.classList.remove("pulsing");
                     statusText.textContent = "Extraction complete!";
                     progressBar.style.width = "100%";
+                    hideControls();
                     loadResults();
+                } else if (s === "interrupted" || s === "error") {
+                    evtSource.close();
+                    statusIcon.textContent = "⚠";
+                    statusIcon.classList.remove("pulsing");
+                    progressBar.style.background = "var(--warning)";
+                    hideControls();
+                    // Show inline resume button so the user doesn't have to go back to main page
+                    statusText.innerHTML = "Pipeline interrupted &mdash; ";
+                    const resumeBtn = document.createElement("a");
+                    resumeBtn.href = "#";
+                    resumeBtn.textContent = "click to resume";
+                    resumeBtn.style.color = "var(--accent)";
+                    resumeBtn.addEventListener("click", async (e) => {
+                        e.preventDefault();
+                        resumeBtn.textContent = "resuming…";
+                        const resp = await fetch(`/api/task/${TASK_ID}/restart`, { method: "POST" });
+                        if (resp.ok) window.location.reload();
+                    });
+                    statusText.appendChild(resumeBtn);
+                } else if (s === "cancelled") {
+                    evtSource.close();
+                    statusIcon.textContent = "⏹";
+                    statusIcon.classList.remove("pulsing");
+                    statusText.textContent = "Pipeline cancelled — progress saved";
+                    progressBar.style.background = "var(--warning)";
+                    hideControls();
+                } else {
+                    // Task is still running (starting / preprocessing / extracting / paused)
+                    // — a transient connection drop. Let EventSource auto-reconnect.
+                    _sse_error_handling = false;
                 }
+            })
+            .catch(() => {
+                // Network error — let EventSource auto-reconnect
+                _sse_error_handling = false;
             });
-        evtSource.close();
+        // Do NOT call evtSource.close() here — only close inside the status handler
+        // so transient errors don't permanently kill a live pipeline stream
     };
 }
 
@@ -1973,4 +2161,18 @@ function formatBytes(bytes) {
     const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function truncateFilename(filepath, maxLen) {
+    // Extract just the filename from a path like "folder/sub/file.txt"
+    const name = filepath.includes("/") ? filepath.split("/").pop() : filepath;
+    maxLen = maxLen || 40;
+    if (name.length <= maxLen) return name;
+    const dotIdx = name.lastIndexOf(".");
+    if (dotIdx === -1) return name.slice(0, maxLen - 1) + "\u2026";
+    const ext = name.slice(dotIdx);            // ".epub"
+    const stem = name.slice(0, dotIdx);        // "very_long_name..."
+    const available = maxLen - ext.length - 1;  // room for stem + ellipsis
+    if (available < 1) return "\u2026" + ext;
+    return stem.slice(0, available) + "\u2026" + ext;
 }

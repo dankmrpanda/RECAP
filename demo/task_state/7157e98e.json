@@ -1,0 +1,24 @@
+{
+  "id": "7157e98e",
+  "status": "complete",
+  "filename": "And_Then_There_Were_None_-_Agatha_Christie_summary_gemini-2.5-pro-exp-03-25.json",
+  "filepath": "/app/demo/uploads/Copyrighted_Books/And_Then_There_Were_None_-_Agatha_Christie/And_Then_There_Were_None_-_Agatha_Christie_summary_gemini-2.5-pro-exp-03-25.json",
+  "upload_folder": "Copyrighted_Books/And_Then_There_Were_None_-_Agatha_Christie",
+  "target_model": "gemini-3.1-flash-lite-preview",
+  "feedback_model": "gemini-3.1-flash-lite-preview",
+  "evaluation_model": "gemini-3.1-flash-lite-preview",
+  "preprocessing_model": "gemini-3.1-flash-lite-preview",
+  "progress": 100,
+  "result_path": "/app/demo/results/Copyrighted_Books/And_Then_There_Were_None_-_Agatha_Christie/And_Then_There_Were_None_-_Agatha_Christie_20260325_044903/Extractions/And_Then_There_Were_None_-_Agatha_Christie_extraction_gemini-3.1-flash-lite-preview_feedback_gemini-3.1-flash-lite-preview.json",
+  "preprocessed_path": "/app/demo/uploads/Copyrighted_Books/And_Then_There_Were_None_-_Agatha_Christie/And_Then_There_Were_None_-_Agatha_Christie_summary_gemini-2.5-pro-exp-03-25.json",
+  "error": null,
+  "created_at": "2026-03-25T04:49:03.656423+00:00",
+  "updated_at": "2026-03-25T04:58:31.204248+00:00",
+  "api_provider_keys": [
+    "gemini"
+  ],
+  "max_feedback_iterations": 5,
+  "feedback_skip_threshold": 0.95,
+  "min_tokens": 40,
+  "max_mismatch_tokens": 5
+}

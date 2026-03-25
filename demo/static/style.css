@@ -490,6 +490,185 @@ body::before {
     padding: 24px;
 }
 
+/* ── Folder Picker ─────────────────────────── */
+
+.folder-input-group {
+    margin-bottom: 16px;
+}
+
+.folder-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    display: block;
+}
+
+.folder-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    min-height: 38px;
+    flex-wrap: wrap;
+}
+
+.folder-crumb {
+    padding: 2px 8px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all var(--transition);
+}
+
+.folder-crumb:hover {
+    background: var(--accent-dim);
+    color: var(--text);
+}
+
+.folder-crumb.active {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.folder-crumb--root {
+    font-weight: 600;
+}
+
+.folder-crumb-sep {
+    color: var(--text-faint);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    user-select: none;
+}
+
+.folder-level-picker {
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    padding: 8px;
+    background: var(--bg-input);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.folder-children {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 26px;
+}
+
+.folder-child-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.folder-child-btn:hover {
+    border-color: var(--accent-border);
+    background: var(--accent-dim);
+    color: var(--accent);
+}
+
+.folder-no-children {
+    font-size: 11px;
+    color: var(--text-faint);
+    padding: 2px 4px;
+}
+
+.folder-new-row {
+    display: flex;
+    gap: 6px;
+}
+
+.folder-new-input {
+    flex: 1;
+    padding: 5px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    transition: all var(--transition);
+}
+
+.folder-new-input:focus {
+    border-color: var(--accent-border);
+}
+
+.folder-new-input::placeholder {
+    color: var(--text-faint);
+}
+
+.folder-new-btn {
+    padding: 5px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.folder-new-btn:hover {
+    background: var(--accent-dim);
+    border-color: var(--accent-border);
+}
+
+.folder-hint {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 4px;
+}
+
+/* ── Folder Groups (Browse Page) ───────────── */
+
+.folder-group-header {
+    padding: 10px 16px 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+}
+
+.folder-group-header:first-child {
+    border-top: none;
+    margin-top: 0;
+}
+
+.folder-group-header .folder-icon {
+    opacity: 0.6;
+}
+
+.saved-result-item.in-folder {
+    padding-left: 32px;
+}
+
 /* ── Drop Zone ──────────────────────────────── */
 
 .drop-zone {
@@ -541,6 +720,25 @@ body::before {
     color: var(--text-faint);
     margin-top: 12px;
     letter-spacing: 0.5px;
+}
+
+/* JSON summary mode notice */
+.json-notice {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    padding: 6px 14px;
+    text-align: center;
+    letter-spacing: 0.2px;
+}
+
+/* Disabled state for settings that don't apply when importing a JSON */
+.setting-group--disabled {
+    opacity: 0.35;
+    pointer-events: none;
 }
 
 /* File Preview */

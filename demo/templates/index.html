@@ -43,14 +43,29 @@
                     <button type="button" id="toggle-upload" class="toggle-btn active">Upload New</button>
                     <button type="button" id="toggle-existing" class="toggle-btn">Previously Uploaded</button>
                 </div>
+                <div class="folder-input-group">
+                    <label class="folder-label">Folder</label>
+                    <input type="hidden" id="upload-folder-input" name="upload_folder" value="">
+                    <div class="folder-breadcrumb" id="folder-breadcrumb">
+                        <span class="folder-crumb folder-crumb--root active" data-level="0" data-path="">/ root</span>
+                    </div>
+                    <div class="folder-level-picker" id="folder-level-picker">
+                        <div class="folder-children" id="folder-children"></div>
+                        <div class="folder-new-row">
+                            <input type="text" id="folder-new-name" class="folder-new-input" placeholder="new folder...">
+                            <button type="button" id="folder-new-btn" class="folder-new-btn">+</button>
+                        </div>
+                    </div>
+                    <p class="folder-hint">click a breadcrumb to navigate — type to create a new subfolder</p>
+                </div>
                 <div id="upload-new-section">
                     <div id="drop-zone" class="drop-zone">
-                        <input type="file" id="file-input" name="file" accept=".txt,.epub,.pdf" hidden>
+                        <input type="file" id="file-input" name="file" accept=".txt,.epub,.pdf,.json" hidden>
                         <div class="drop-zone-content">
                             <div class="drop-icon">[ FILE ]</div>
                             <p class="drop-title">Drop your book here</p>
                             <p class="drop-hint">or <span class="drop-link">browse files</span></p>
-                            <p class="drop-formats">TXT · EPUB · PDF — max 100MB</p>
+                            <p class="drop-formats">TXT · EPUB · PDF · JSON — max 100MB</p>
                         </div>
                         <div id="file-preview" class="file-preview hidden">
                             <div class="file-icon">FILE</div>
@@ -59,6 +74,9 @@
                                 <span id="file-size" class="file-size"></span>
                             </div>
                             <button type="button" id="file-remove" class="file-remove">✕</button>
+                        </div>
+                        <div id="json-mode-notice" class="json-notice hidden">
+                            Pre-processed JSON detected — preprocessing step will be skipped
                         </div>
                     </div>
                 </div>
@@ -205,7 +223,7 @@
                             </optgroup>
                         </select>
                     </div>
-                    <div class="setting-group">
+                    <div class="setting-group" id="preprocessor-group">
                         <label for="preprocessing_model">Preprocessor</label>
                         <p class="setting-hint">Segments the book into chapters & events</p>
                         <select id="preprocessing_model" name="preprocessing_model">
